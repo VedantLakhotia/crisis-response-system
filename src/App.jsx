@@ -1,121 +1,76 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useState, useEffect } from "react";
+import { db } from "./firebase";
+import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy } from "firebase/firestore";
+import { Flame, Activity, ShieldAlert, AlertTriangle, Clock } from "lucide-react";
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [alerts, setAlerts] = useState([]);
+
+  // --- DATABASE LOGIC (Listening for alerts) ---
+  useEffect(() => {
+    const q = query(collection(db, "alerts"), orderBy("time", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAlerts(data);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // --- BUTTON LOGIC (Sending alerts) ---
+  const sendAlert = async (type) => {
+    try {
+      await addDoc(collection(db, "alerts"), {
+        type: type,
+        status: "Pending",
+        location: "Room " + (Math.floor(Math.random() * 500) + 100), // Random room for demo
+        time: serverTimestamp(),
+      });
+    } catch (e) {
+      alert("Error sending alert");
+    }
+  };
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", fontFamily: "sans-serif", backgroundColor: "#111" }}>
+      
+      {/* SECTION 1: THE REPORTER (GUEST SIDE) */}
+      <div style={{ padding: "40px 20px", textAlign: "center", borderBottom: "2px solid #333" }}>
+        <h1 style={{ color: "white" }}>Hospitality Crisis App</h1>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "15px", maxWidth: "500px", margin: "20px auto" }}>
+          <button onClick={() => sendAlert("FIRE")} style={btn("#e11d48")}><Flame /> FIRE</button>
+          <button onClick={() => sendAlert("MEDICAL")} style={btn("#2563eb")}><Activity /> MEDICAL</button>
+          <button onClick={() => sendAlert("SECURITY")} style={btn("#ea580c")}><ShieldAlert /> SECURITY</button>
+          <button onClick={() => sendAlert("OTHER")} style={btn("#4b5563")}><AlertTriangle /> OTHER</button>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.jsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+      </div>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
+      {/* SECTION 2: THE DASHBOARD (SECURITY SIDE) */}
+      <div style={{ flex: 1, backgroundColor: "#f3f4f6", padding: "20px" }}>
+        <h2 style={{ color: "#333", display: "flex", alignItems: "center", gap: "10px" }}><Clock /> Live Incident Feed</h2>
+        <div style={{ maxWidth: "600px", margin: "0 auto" }}>
+          {alerts.length === 0 && <p>No active incidents.</p>}
+          {alerts.map((alert) => (
+            <div key={alert.id} style={{ 
+              backgroundColor: "white", padding: "15px", marginBottom: "10px", 
+              borderRadius: "10px", borderLeft: "8px solid " + (alert.type === 'FIRE' ? 'red' : 'blue'),
+              boxShadow: "0 2px 4px rgba(0,0,0,0.1)" 
+            }}>
+              <strong style={{ fontSize: "18px" }}>{alert.type} REPORTED</strong>
+              <p style={{ margin: "5px 0", color: "#666" }}>Location: {alert.location} | Status: <span style={{ color: "red", fontWeight: "bold" }}>{alert.status}</span></p>
+            </div>
+          ))}
         </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+      </div>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+    </div>
+  );
 }
 
-export default App
+// Simple styling helper
+const btn = (color) => ({
+  backgroundColor: color, color: "white", padding: "30px 10px", fontSize: "16px",
+  fontWeight: "bold", borderRadius: "12px", border: "none", cursor: "pointer",
+  display: "flex", flexDirection: "column", alignItems: "center", gap: "10px"
+});
+
+export default App;
