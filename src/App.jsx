@@ -7,7 +7,7 @@ import MapModule from "./MapComponent";
 import { APIProvider, Map, Marker } from '@vis.gl/react-google-maps';
 
 function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(null); // { id, role } | null
   const [alerts, setAlerts] = useState([]);
   const [staff, setStaff] = useState([]);
   const [showLogin, setShowLogin] = useState(false);
@@ -49,7 +49,7 @@ function App() {
       status: "Pending",
       location: locationLabel,
       coords,
-      triggeredBy: user,
+      triggeredBy: user?.id ?? user,
       time: serverTimestamp(),
     });
     toast.promise(promise, {
@@ -108,7 +108,8 @@ function App() {
             {user ? (
               <>
                 <div className="px-4 py-2 glass rounded-lg text-sm flex items-center gap-2">
-                  <span className="text-slate-400 mr-2 border-r border-white/10 pr-2 font-mono">{user}</span>
+                  <span className="text-slate-400 mr-2 border-r border-white/10 pr-2 font-mono">{user?.id ?? user}</span>
+                  {user?.role && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-md font-bold" style={{ background: user.role === 'staff' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)', color: user.role === 'staff' ? '#f87171' : '#94a3b8' }}>{user.role}</span>}
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                   System Active
                 </div>
@@ -147,7 +148,7 @@ function App() {
             {/* Panel */}
             <div className="fixed top-20 right-6 z-50" role="dialog" aria-modal="true" aria-label="Login panel">
               <LoginPanel
-                onLogin={(id) => { setUser(id); setShowLogin(false); }}
+                onLogin={({ id, role }) => { setUser({ id, role }); setShowLogin(false); }}
                 onClose={() => setShowLogin(false)}
               />
             </div>
@@ -190,7 +191,7 @@ function App() {
                   </div>
                 ) : (
                   alerts.map((alert) => (
-                    <AlertCard key={alert.id} alert={alert} onResolve={() => resolveAlert(alert.id, alert.type)} />
+                    <AlertCard key={alert.id} alert={alert} onResolve={() => resolveAlert(alert.id, alert.type)} userRole={user?.role} />
                   ))
                 )}
               </div>
@@ -236,7 +237,7 @@ function TriggerButton({ onClick, color, icon, label }) {
   );
 }
 
-function AlertCard({ alert, onResolve }) {
+function AlertCard({ alert, onResolve, userRole }) {
   const colors = {
     FIRE: "border-red-500/50 from-red-500/10 to-transparent",
     MEDICAL: "border-blue-500/50 from-blue-500/10 to-transparent",
@@ -253,14 +254,16 @@ function AlertCard({ alert, onResolve }) {
             <MapPin size={10} className="inline" /> {alert.location || "Location not set"}
           </p>
         </div>
-        <button 
-          onClick={onResolve}
-          aria-label={`Mark ${alert.type} incident as resolved`}
-          title={`Mark ${alert.type} incident as resolved`}
-          className="p-2 bg-green-500/20 text-green-500 rounded-lg btn-click-effect hover:bg-green-500 hover:text-white flex-shrink-0"
-        >
-          <CheckCircle size={18} />
-        </button>
+        {userRole === 'staff' && (
+          <button 
+            onClick={onResolve}
+            aria-label={`Mark ${alert.type} incident as resolved`}
+            title={`Mark ${alert.type} incident as resolved`}
+            className="p-2 bg-green-500/20 text-green-500 rounded-lg btn-click-effect hover:bg-green-500 hover:text-white flex-shrink-0"
+          >
+            <CheckCircle size={18} />
+          </button>
+        )}
       </div>
       {/* Reporter ID */}
       {alert.triggeredBy && (
@@ -301,7 +304,7 @@ function LoginPanel({ onLogin, onClose }) {
     setIsLoading(true);
     // Small delay for UX feel
     await new Promise(r => setTimeout(r, 600));
-    onLogin(id.trim().toUpperCase());
+    onLogin({ id: id.trim().toUpperCase(), role });
     setIsLoading(false);
   };
 
@@ -430,14 +433,52 @@ const ALERT_EMOJIS = {
 
 function LocationPickerModal({ alertType, onConfirm, onCancel }) {
   const [pinned, setPinned] = useState(null);
+  const [locationName, setLocationName] = useState("");
+  const [geocoding, setGeocoding] = useState(false);
   const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyAq9afG542PH6dlxtnm3-dJS5-hozfW53Q';
   const MAP_ID = 'bf50a9291fa2784d';
   const hotelCenter = { lat: 22.7196, lng: 75.8577 };
   const accentColor = ALERT_COLORS[alertType] || "#ef4444";
 
+  const reverseGeocode = async (lat, lng) => {
+    setGeocoding(true);
+    setLocationName("");
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&accept-language=en`,
+        { headers: { "User-Agent": "CrisisControlCenter/1.0" } }
+      );
+      const data = await res.json();
+      if (data && data.address) {
+        const a = data.address;
+        // Build a short, readable label from the most specific available parts
+        const parts = [
+          a.amenity || a.building || a.hotel || a.tourism || a.shop || a.office,
+          a.road || a.pedestrian || a.footway,
+          a.suburb || a.neighbourhood || a.city_district || a.quarter,
+          a.city || a.town || a.village,
+        ].filter(Boolean);
+        setLocationName(parts.slice(0, 3).join(", ") || data.display_name.split(",").slice(0, 3).join(",").trim());
+      } else {
+        setLocationName("Pinned Location");
+      }
+    } catch {
+      setLocationName("Pinned Location");
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const handleMapClick = (e) => {
+    const lat = e.detail.latLng.lat;
+    const lng = e.detail.latLng.lng;
+    setPinned({ lat, lng });
+    reverseGeocode(lat, lng);
+  };
+
   const handleConfirm = () => {
     if (!pinned) return;
-    const locationLabel = `${pinned.lat.toFixed(5)}, ${pinned.lng.toFixed(5)}`;
+    const locationLabel = locationName || `${pinned.lat.toFixed(5)}, ${pinned.lng.toFixed(5)}`;
     onConfirm({ coords: pinned, locationLabel });
   };
 
@@ -472,7 +513,7 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
             disableDefaultUI={true}
             mapId={MAP_ID}
             className="w-full h-full"
-            onClick={(e) => setPinned({ lat: e.detail.latLng.lat, lng: e.detail.latLng.lng })}
+            onClick={handleMapClick}
           >
             {pinned && (
               <Marker
@@ -498,8 +539,13 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
       <div className="px-6 py-4 border-t border-white/8 flex items-center justify-between gap-4" style={{ background: "rgba(255,255,255,0.03)" }}>
         <div className="text-sm">
           {pinned ? (
-            <span className="font-mono text-slate-300 text-xs bg-white/5 px-3 py-1.5 rounded-lg border border-white/8">
-              📍 {pinned.lat.toFixed(5)}, {pinned.lng.toFixed(5)}
+            <span className="text-slate-300 text-xs bg-white/5 px-3 py-1.5 rounded-lg border border-white/8 flex items-center gap-2 max-w-xs">
+              <MapPin size={12} className="shrink-0 text-red-400" />
+              {geocoding ? (
+                <span className="text-slate-500 italic">Fetching location…</span>
+              ) : (
+                <span className="truncate">{locationName || `${pinned.lat.toFixed(5)}, ${pinned.lng.toFixed(5)}`}</span>
+              )}
             </span>
           ) : (
             <span className="text-slate-600 text-xs">No location selected yet</span>
@@ -514,15 +560,27 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!pinned}
+            disabled={!pinned || geocoding}
             className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold text-white transition-all btn-click-effect disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
-              background: pinned ? `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` : "#333",
-              boxShadow: pinned ? `0 4px 20px ${accentColor}44` : "none"
+              background: (pinned && !geocoding) ? `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` : "#333",
+              boxShadow: (pinned && !geocoding) ? `0 4px 20px ${accentColor}44` : "none"
             }}
           >
-            <Send size={14} />
-            Dispatch {alertType} Alert
+            {geocoding ? (
+              <>
+                <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                Resolving location…
+              </>
+            ) : (
+              <>
+                <Send size={14} />
+                Dispatch {alertType} Alert
+              </>
+            )}
           </button>
         </div>
       </div>
