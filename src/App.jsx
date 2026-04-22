@@ -4,7 +4,7 @@ import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, doc, u
 import { Flame, Activity, ShieldAlert, AlertTriangle, Clock, CheckCircle, Navigation, LayoutDashboard, Settings, LogIn, LogOut, X, MapPin, Send } from "lucide-react";
 import { Toaster, toast } from "sonner";
 import MapModule from "./MapComponent";
-import { APIProvider, Map, Marker } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 
 function App() {
   const [user, setUser] = useState(null); // { id, role } | null
@@ -431,14 +431,42 @@ const ALERT_EMOJIS = {
   OTHER: "⚠️",
 };
 
+// Haversine distance in km
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const STATION_CONFIG = {
+  FIRE:     { amenities: ['fire_station'],        emoji: '🚒', label: 'Fire Stations',    color: '#ef4444' },
+  MEDICAL:  { amenities: ['hospital', 'clinic'],  emoji: '🏥', label: 'Hospitals',        color: '#3b82f6' },
+  SECURITY: { amenities: ['police'],              emoji: '👮', label: 'Police Stations',  color: '#f97316' },
+  OTHER:    { amenities: ['hospital', 'fire_station', 'police'], emoji: '🆘', label: 'Emergency Services', color: '#64748b' },
+};
+
+const PIN_CONFIG = {
+  FIRE:     { bg: '#ef4444', border: '#b91c1c' },
+  MEDICAL:  { bg: '#3b82f6', border: '#1d4ed8' },
+  SECURITY: { bg: '#f97316', border: '#c2410c' },
+  OTHER:    { bg: '#64748b', border: '#475569' },
+};
+
 function LocationPickerModal({ alertType, onConfirm, onCancel }) {
   const [pinned, setPinned] = useState(null);
   const [locationName, setLocationName] = useState("");
   const [geocoding, setGeocoding] = useState(false);
+  const [stations, setStations] = useState([]);
+  const [loadingStations, setLoadingStations] = useState(false);
   const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || 'AIzaSyAq9afG542PH6dlxtnm3-dJS5-hozfW53Q';
   const MAP_ID = 'bf50a9291fa2784d';
   const hotelCenter = { lat: 22.7196, lng: 75.8577 };
   const accentColor = ALERT_COLORS[alertType] || "#ef4444";
+  const pinCfg = PIN_CONFIG[alertType] || PIN_CONFIG.OTHER;
+  const stationCfg = STATION_CONFIG[alertType] || STATION_CONFIG.OTHER;
 
   const reverseGeocode = async (lat, lng) => {
     setGeocoding(true);
@@ -451,7 +479,6 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
       const data = await res.json();
       if (data && data.address) {
         const a = data.address;
-        // Build a short, readable label from the most specific available parts
         const parts = [
           a.amenity || a.building || a.hotel || a.tourism || a.shop || a.office,
           a.road || a.pedestrian || a.footway,
@@ -469,18 +496,63 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
     }
   };
 
+  const fetchNearbyStations = async (lat, lng) => {
+    setLoadingStations(true);
+    setStations([]);
+    try {
+      // Use nwr (node + way + relation) so polygon-mapped facilities are included
+      // out center; gives centroid lat/lon for ways and relations
+      const amenityUnion = stationCfg.amenities
+        .map(a => `nwr[amenity=${a}](around:10000,${lat},${lng});`)
+        .join("");
+      const query = `[out:json][timeout:15];(${amenityUnion});out center;`;
+      const res = await fetch('https://overpass-api.de/api/interpreter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(query)}`
+      });
+      const data = await res.json();
+      const results = (data.elements || [])
+        .map(el => {
+          // Nodes have el.lat/el.lon directly; ways/relations have el.center
+          const elLat = el.lat ?? el.center?.lat;
+          const elLng = el.lon ?? el.center?.lon;
+          if (elLat == null || elLng == null) return null;
+          return {
+            id: el.id,
+            name: el.tags?.name || el.tags?.['name:en'] || el.tags?.['name:hi'] || "Unnamed Station",
+            amenity: el.tags?.amenity,
+            lat: elLat,
+            lng: elLng,
+            dist: haversine(lat, lng, elLat, elLng),
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.dist - b.dist)
+        .slice(0, 5);
+      setStations(results);
+    } catch {
+      setStations([]);
+    } finally {
+      setLoadingStations(false);
+    }
+  };
+
   const handleMapClick = (e) => {
     const lat = e.detail.latLng.lat;
     const lng = e.detail.latLng.lng;
     setPinned({ lat, lng });
     reverseGeocode(lat, lng);
+    fetchNearbyStations(lat, lng);
   };
 
   const handleConfirm = () => {
     if (!pinned) return;
-    const locationLabel = locationName || `${pinned.lat.toFixed(5)}, ${pinned.lng.toFixed(5)}`;
+    const locationLabel = locationName || "Pinned Location";
     onConfirm({ coords: pinned, locationLabel });
   };
+
+  const AMENITY_EMOJI = { fire_station: '🚒', hospital: '🏥', clinic: '🏥', police: '👮' };
 
   return (
     <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "rgba(10,10,12,0.92)", backdropFilter: "blur(12px)" }}>
@@ -495,42 +567,122 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
             <p className="text-[11px] text-slate-500">Click anywhere on the map to mark the incident location</p>
           </div>
         </div>
-        <button
-          onClick={onCancel}
-          aria-label="Cancel location picker"
-          className="p-2 rounded-xl text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
-        >
+        <button onClick={onCancel} aria-label="Cancel location picker" className="p-2 rounded-xl text-slate-500 hover:text-white hover:bg-white/10 transition-colors">
           <X size={18} />
         </button>
       </div>
 
-      {/* Map */}
-      <div className="flex-1 relative">
-        <APIProvider apiKey={API_KEY}>
-          <Map
-            defaultCenter={hotelCenter}
-            defaultZoom={16}
-            disableDefaultUI={true}
-            mapId={MAP_ID}
-            className="w-full h-full"
-            onClick={handleMapClick}
-          >
-            {pinned && (
-              <Marker
-                position={pinned}
-                label={{ text: ALERT_EMOJIS[alertType], className: "text-2xl" }}
-              />
-            )}
-          </Map>
-        </APIProvider>
+      {/* Body: map + stations side-by-side */}
+      <div className="flex-1 flex overflow-hidden">
 
-        {/* Crosshair hint overlay */}
-        {!pinned && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="px-5 py-3 rounded-2xl text-sm text-slate-300 font-medium flex items-center gap-2" style={{ background: "rgba(0,0,0,0.7)", border: "1px solid rgba(255,255,255,0.1)" }}>
-              <MapPin size={16} className="text-red-400" />
-              Tap the map to drop a pin
+        {/* Map */}
+        <div className="flex-1 relative">
+          <APIProvider apiKey={API_KEY}>
+            <Map
+              defaultCenter={hotelCenter}
+              defaultZoom={16}
+              disableDefaultUI={true}
+              mapId={MAP_ID}
+              className="w-full h-full"
+              onClick={handleMapClick}
+            >
+              {/* Incident pin — colored per crisis type */}
+              {pinned && (
+                <AdvancedMarker position={pinned} title={`${alertType} incident`}>
+                  <div style={{
+                    position: 'absolute',
+                    transform: 'translate(-50%, -100%)',
+                  }}>
+                    <div style={{
+                      width: '36px', height: '36px',
+                      backgroundColor: pinCfg.bg,
+                      border: `3px solid ${pinCfg.border}`,
+                      borderRadius: '50% 50% 50% 0',
+                      transform: 'rotate(-45deg)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '2px 2px 8px rgba(0,0,0,0.3)'
+                    }}>
+                      <span style={{ transform: 'rotate(45deg)', fontSize: '18px' }}>
+                        {ALERT_EMOJIS[alertType]}
+                      </span>
+                    </div>
+                  </div>
+                </AdvancedMarker>
+              )}
+              {/* Nearby station pins */}
+              {stations.map(s => (
+                <AdvancedMarker key={s.id} position={{ lat: s.lat, lng: s.lng }} title={s.name}>
+                  <div style={{
+                    background: stationCfg.color + '22',
+                    border: `2px solid ${stationCfg.color}88`,
+                    borderRadius: '50%',
+                    width: 32, height: 32,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 16, backdropFilter: 'blur(4px)',
+                  }}>
+                    {AMENITY_EMOJI[s.amenity] || '📍'}
+                  </div>
+                </AdvancedMarker>
+              ))}
+            </Map>
+          </APIProvider>
+
+          {/* Crosshair hint */}
+          {!pinned && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="px-5 py-3 rounded-2xl text-sm text-slate-300 font-medium flex items-center gap-2" style={{ background: "rgba(0,0,0,0.7)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <MapPin size={16} className="text-red-400" />
+                Tap the map to drop a pin
+              </div>
             </div>
+          )}
+        </div>
+
+        {/* Nearby stations sidebar */}
+        {pinned && (
+          <div className="w-72 flex flex-col border-l border-white/8 overflow-y-auto" style={{ background: "rgba(255,255,255,0.02)" }}>
+            <div className="px-4 py-3 border-b border-white/5">
+              <p className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                <span>{stationCfg.emoji}</span> Nearest {stationCfg.label}
+              </p>
+            </div>
+            {loadingStations ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-slate-500">
+                <svg className="animate-spin w-6 h-6" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                </svg>
+                <span className="text-xs">Searching nearby…</span>
+              </div>
+            ) : stations.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 text-slate-600 px-4 text-center">
+                <span className="text-3xl">🔍</span>
+                <span className="text-xs">No stations found within 8 km</span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-0">
+                {stations.map((s, i) => (
+                  <div
+                    key={s.id}
+                    className="px-4 py-3 border-b border-white/5 flex items-start gap-3 hover:bg-white/5 transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-base"
+                      style={{ background: stationCfg.color + '18', border: `1px solid ${stationCfg.color}33` }}>
+                      {AMENITY_EMOJI[s.amenity] || '📍'}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-white truncate">{s.name}</p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        {s.dist < 1
+                          ? `${Math.round(s.dist * 1000)} m away`
+                          : `${s.dist.toFixed(1)} km away`}
+                      </p>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-600 mt-0.5">#{i + 1}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -541,21 +693,16 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
           {pinned ? (
             <span className="text-slate-300 text-xs bg-white/5 px-3 py-1.5 rounded-lg border border-white/8 flex items-center gap-2 max-w-xs">
               <MapPin size={12} className="shrink-0 text-red-400" />
-              {geocoding ? (
-                <span className="text-slate-500 italic">Fetching location…</span>
-              ) : (
-                <span className="truncate">{locationName || `${pinned.lat.toFixed(5)}, ${pinned.lng.toFixed(5)}`}</span>
-              )}
+              {geocoding
+                ? <span className="text-slate-500 italic">Fetching location…</span>
+                : <span className="truncate">{locationName || "Pinned Location"}</span>}
             </span>
           ) : (
             <span className="text-slate-600 text-xs">No location selected yet</span>
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-          >
+          <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
             Cancel
           </button>
           <button
