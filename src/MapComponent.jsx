@@ -147,14 +147,12 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
       );
       const targetPos = alert.coords;
 
-      let moveTimer = null;
-      let etaTimer = null;
+      let updateTimer = null;
       let stopped = false;
 
       const stop = () => {
         stopped = true;
-        if (moveTimer) clearInterval(moveTimer);
-        if (etaTimer) clearInterval(etaTimer);
+        if (updateTimer) clearInterval(updateTimer);
       };
 
       controllersRef.current.set(alert.id, { stop });
@@ -181,36 +179,43 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
               [alert.id]: { ...(prev[alert.id] || {}), etaSec: totalDuration, unitType }
             }));
 
-            let index = 0;
-            const stepInterval = (totalDuration * 1000) / Math.max(1, coordinates.length);
-            moveTimer = setInterval(() => {
-              if (stopped) return;
-              if (index >= coordinates.length) {
-                clearInterval(moveTimer);
-                setDispatches(prev => ({
-                  ...prev,
-                  [alert.id]: { ...(prev[alert.id] || {}), truckPos: [targetPos.lat, targetPos.lng] }
-                }));
-                return;
-              }
-              const [lng, lat] = coordinates[index];
-              setDispatches(prev => ({
-                ...prev,
-                [alert.id]: { ...(prev[alert.id] || {}), truckPos: [lat, lng] }
-              }));
-              index++;
-            }, stepInterval);
-
-            etaTimer = setInterval(() => {
+            // SYNCHRONIZED UPDATE: Use elapsed time for both ETA and vehicle position
+            updateTimer = setInterval(() => {
               if (stopped) return;
               const elapsedSec = (Date.now() - startMs) / 1000;
               const remaining = Math.max(0, totalDuration - elapsedSec);
+              
+              // Calculate progress (0 to 1)
+              const progress = Math.min(1, elapsedSec / totalDuration);
+              
+              // Interpolate vehicle position along the route
+              const targetIndex = Math.min(
+                Math.floor(progress * (coordinates.length - 1)),
+                coordinates.length - 1
+              );
+              
+              let currentPos;
+              if (progress >= 1) {
+                currentPos = [targetPos.lat, targetPos.lng];
+              } else if (targetIndex >= coordinates.length - 1) {
+                currentPos = [targetPos.lat, targetPos.lng];
+              } else {
+                // Linear interpolation between waypoints
+                const [lng1, lat1] = coordinates[targetIndex];
+                const [lng2, lat2] = coordinates[Math.min(targetIndex + 1, coordinates.length - 1)];
+                const segmentProgress = (progress * (coordinates.length - 1)) - targetIndex;
+                const lat = lat1 + (lat2 - lat1) * segmentProgress;
+                const lng = lng1 + (lng2 - lng1) * segmentProgress;
+                currentPos = [lat, lng];
+              }
+              
               setDispatches(prev => ({
                 ...prev,
-                [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining }
+                [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos }
               }));
-              if (remaining <= 0) clearInterval(etaTimer);
-            }, 250);
+              
+              if (remaining <= 0) clearInterval(updateTimer);
+            }, 100);
           }
         } catch (err) {
           console.error("Routing error:", err);
