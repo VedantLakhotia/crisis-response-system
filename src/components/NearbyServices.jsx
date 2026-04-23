@@ -16,17 +16,23 @@ function NearbyServices({
   center = { lat: 22.7196, lng: 75.8577 }, 
   isOpen = false, 
   onClose = () => {},
-  emergencyType = 'Fire' 
+  emergencyType = 'FIRE' 
 }) {
   const [services, setServices] = useState({ fireStations: [], hospitals: [] });
   const [loading, setLoading] = useState(false);
-  const [selectedTab, setSelectedTab] = useState(emergencyType === 'Fire' ? 'fire' : 'hospital');
+  const emergencyKey = (emergencyType || "").toString().toUpperCase();
+  const [selectedTab, setSelectedTab] = useState(emergencyKey === 'FIRE' ? 'fire' : 'hospital');
 
   useEffect(() => {
     if (isOpen) {
       loadNearbyServices();
     }
   }, [isOpen, center]);
+
+  useEffect(() => {
+    const key = (emergencyType || "").toString().toUpperCase();
+    setSelectedTab(key === "FIRE" ? "fire" : "hospital");
+  }, [emergencyType, isOpen]);
 
   const loadNearbyServices = async () => {
     setLoading(true);

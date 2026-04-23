@@ -3,9 +3,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { renderToString } from 'react-dom/server';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from "./firebase";
-import { doc, updateDoc } from "firebase/firestore";
 import { getAllServices } from './utils/nearbyServices.js';
 import { Flame, HeartPulse, ShieldAlert, AlertTriangle, Building2, Activity, Truck, Navigation, Info, Hospital as HospitalIcon } from 'lucide-react';
 
@@ -98,10 +97,10 @@ const getCustomIcon = (type, isTarget = false) => {
 function MapComponent({ alerts = [], staff = [], showServices = true }) {
   const hotelCenter = [22.7196, 75.8577];
   const [services, setServices] = useState({ fireStations: [], hospitals: [] });
-  const [eta, setEta] = useState(null);
-  const [truckPos, setTruckPos] = useState(null);
-  const [activeUnitType, setActiveUnitType] = useState("FIRE");
+  // Multiple simultaneous dispatches: { [alertId]: { etaSec, truckPos: [lat,lng], unitType } }
+  const [dispatches, setDispatches] = useState({});
   const [hoveredName, setHoveredName] = useState(null);
+  const controllersRef = useRef(new Map()); // alertId -> { stop() }
 
   useEffect(() => {
     if (showServices) {
@@ -110,78 +109,125 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
   }, [showServices]);
 
   useEffect(() => {
-    const dispatchedAlert = alerts.find(a => a.status === "EN-ROUTE");
-    if (!dispatchedAlert) {
-      setEta(null);
-      setTruckPos(null);
-      return;
-    }
+    const enRoute = alerts.filter(a => a.status === "EN-ROUTE" && a.coords && a.id);
+    const enRouteIds = new Set(enRoute.map(a => a.id));
 
-    setActiveUnitType(dispatchedAlert.type || "FIRE");
-    
-    // 1. Find nearest station/hospital
-    const serviceList = dispatchedAlert.type === "MEDICAL" ? services.hospitals : services.fireStations;
-    let nearestService = null;
-    if (serviceList && serviceList.length > 0 && dispatchedAlert.coords) {
-      nearestService = serviceList.reduce((prev, curr) => {
-        const d1 = Math.sqrt(Math.pow(curr.coords.lat - dispatchedAlert.coords.lat, 2) + Math.pow(curr.coords.lng - dispatchedAlert.coords.lng, 2));
-        const d2 = Math.sqrt(Math.pow(prev.coords.lat - dispatchedAlert.coords.lat, 2) + Math.pow(prev.coords.lng - dispatchedAlert.coords.lng, 2));
-        return d1 < d2 ? curr : prev;
-      });
-    }
-
-    const startPos = nearestService ? nearestService.coords : (
-      dispatchedAlert.type === "MEDICAL" ? { lat: 22.7300, lng: 75.8700 } : { lat: 22.6900, lng: 75.8300 }
-    );
-    // USE ACTUAL ALERT COORDS AS TARGET
-    const targetPos = dispatchedAlert.coords || { lat: 22.7196, lng: 75.8577 };
-
-    // 2. Fetch Shortest Path from OSRM
-    const fetchPath = async () => {
-      try {
-        const url = `https://router.project-osrm.org/route/v1/driving/${startPos.lng},${startPos.lat};${targetPos.lng},${targetPos.lat}?overview=full&geometries=geojson`;
-        const res = await fetch(url);
-        const data = await res.json();
-        
-        if (data.routes && data.routes[0]) {
-          const coordinates = data.routes[0].geometry.coordinates; // [lng, lat]
-          const totalDuration = data.routes[0].duration; // seconds
-          setEta(totalDuration);
-
-          // 3. Animation Loop (Synchronized with real-world time)
-          let index = 0;
-          // Calculate interval so that the entire path takes exactly totalDuration seconds
-          const stepInterval = (totalDuration * 1000) / coordinates.length;
-          
-          const interval = setInterval(() => {
-            if (index >= coordinates.length) {
-              clearInterval(interval);
-              setEta(0);
-              setTruckPos([targetPos.lat, targetPos.lng]);
-              updateDoc(doc(db, "alerts", dispatchedAlert.id), { status: "RESOLVED" })
-                .catch(err => console.error("Auto-resolve failed:", err));
-              return;
-            }
-
-            const [lng, lat] = coordinates[index];
-            setTruckPos([lat, lng]);
-            
-            // Precise ETA countdown synced with progress
-            setEta(totalDuration * (1 - (index / coordinates.length)));
-            
-            index++;
-          }, stepInterval); 
-
-          return () => clearInterval(interval);
-        }
-      } catch (err) {
-        console.error("Routing error:", err);
-        setTruckPos([startPos.lat, startPos.lng]);
+    // Stop simulations for alerts no longer en-route
+    for (const [id, ctrl] of controllersRef.current.entries()) {
+      if (!enRouteIds.has(id)) {
+        try { ctrl?.stop?.(); } catch { /* noop */ }
+        controllersRef.current.delete(id);
+        setDispatches(prev => {
+          if (!prev[id]) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
       }
-    };
+    }
 
-    fetchPath();
+    // Start simulations for new en-route alerts
+    enRoute.forEach((alert) => {
+      if (controllersRef.current.has(alert.id)) return;
+
+      const unitType = alert.type || "FIRE";
+      // 1. Find nearest station/hospital
+      const serviceList = unitType === "MEDICAL" ? services.hospitals : services.fireStations;
+      let nearestService = null;
+      if (serviceList && serviceList.length > 0 && alert.coords) {
+        nearestService = serviceList.reduce((prev, curr) => {
+          const d1 = Math.sqrt(Math.pow(curr.coords.lat - alert.coords.lat, 2) + Math.pow(curr.coords.lng - alert.coords.lng, 2));
+          const d2 = Math.sqrt(Math.pow(prev.coords.lat - alert.coords.lat, 2) + Math.pow(prev.coords.lng - alert.coords.lng, 2));
+          return d1 < d2 ? curr : prev;
+        });
+      }
+
+      const startPos = nearestService ? nearestService.coords : (
+        unitType === "MEDICAL" ? { lat: 22.7300, lng: 75.8700 } : { lat: 22.6900, lng: 75.8300 }
+      );
+      const targetPos = alert.coords;
+
+      let moveTimer = null;
+      let etaTimer = null;
+      let stopped = false;
+
+      const stop = () => {
+        stopped = true;
+        if (moveTimer) clearInterval(moveTimer);
+        if (etaTimer) clearInterval(etaTimer);
+      };
+
+      controllersRef.current.set(alert.id, { stop });
+      setDispatches(prev => ({
+        ...prev,
+        [alert.id]: { etaSec: null, truckPos: [startPos.lat, startPos.lng], unitType }
+      }));
+
+      // 2. Fetch Shortest Path from OSRM and start animation
+      (async () => {
+        try {
+          const url = `https://router.project-osrm.org/route/v1/driving/${startPos.lng},${startPos.lat};${targetPos.lng},${targetPos.lat}?overview=full&geometries=geojson`;
+          const res = await fetch(url);
+          const data = await res.json();
+          if (stopped) return;
+
+          if (data.routes && data.routes[0]) {
+            const coordinates = data.routes[0].geometry.coordinates; // [lng, lat]
+            const totalDuration = data.routes[0].duration; // seconds
+            const startMs = Date.now();
+
+            setDispatches(prev => ({
+              ...prev,
+              [alert.id]: { ...(prev[alert.id] || {}), etaSec: totalDuration, unitType }
+            }));
+
+            let index = 0;
+            const stepInterval = (totalDuration * 1000) / Math.max(1, coordinates.length);
+            moveTimer = setInterval(() => {
+              if (stopped) return;
+              if (index >= coordinates.length) {
+                clearInterval(moveTimer);
+                setDispatches(prev => ({
+                  ...prev,
+                  [alert.id]: { ...(prev[alert.id] || {}), truckPos: [targetPos.lat, targetPos.lng] }
+                }));
+                return;
+              }
+              const [lng, lat] = coordinates[index];
+              setDispatches(prev => ({
+                ...prev,
+                [alert.id]: { ...(prev[alert.id] || {}), truckPos: [lat, lng] }
+              }));
+              index++;
+            }, stepInterval);
+
+            etaTimer = setInterval(() => {
+              if (stopped) return;
+              const elapsedSec = (Date.now() - startMs) / 1000;
+              const remaining = Math.max(0, totalDuration - elapsedSec);
+              setDispatches(prev => ({
+                ...prev,
+                [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining }
+              }));
+              if (remaining <= 0) clearInterval(etaTimer);
+            }, 250);
+          }
+        } catch (err) {
+          console.error("Routing error:", err);
+        }
+      })();
+    });
   }, [alerts, services]);
+
+  // Cleanup all timers on unmount
+  useEffect(() => {
+    return () => {
+      for (const ctrl of controllersRef.current.values()) {
+        try { ctrl?.stop?.(); } catch { /* noop */ }
+      }
+      controllersRef.current.clear();
+    };
+  }, []);
 
   return (
     <div className="relative h-[500px] w-full rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/5 bg-black z-0">
@@ -252,12 +298,15 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
         ))}
 
         {/* 5. DISPATCH UNIT TRACKING */}
-        {truckPos && (
-          <Marker 
-            position={truckPos}
-            icon={getCustomIcon(activeUnitType === "MEDICAL" ? "VEHICLE_MEDICAL" : "VEHICLE_FIRE")}
-          />
-        )}
+        {Object.entries(dispatches).map(([id, d]) => (
+          d?.truckPos ? (
+            <Marker
+              key={id}
+              position={d.truckPos}
+              icon={getCustomIcon(d.unitType === "MEDICAL" ? "VEHICLE_MEDICAL" : "VEHICLE_FIRE")}
+            />
+          ) : null
+        ))}
       </MapContainer>
 
       {/* Floating Tooltip */}
@@ -281,22 +330,38 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
         LIVE.DISPATCH_ACTIVE
       </div>
 
-      {eta !== null && (
-        <div className={`absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] px-8 py-4 border-2 rounded-[2rem] shadow-2xl flex items-center gap-6 text-white ${activeUnitType === "MEDICAL" ? "bg-blue-900/80 border-blue-500/50 shadow-blue-500/20" : "bg-red-900/80 border-red-500/50 shadow-red-500/20"} backdrop-blur-lg pointer-events-none`}>
-          <div className="p-3 bg-white/10 rounded-2xl">
-            {activeUnitType === "MEDICAL" ? <Activity size={24} className="animate-pulse" /> : <Truck size={24} className="animate-bounce" />}
-          </div>
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60">Arriving In</p>
-            <p className="text-2xl font-black tabular-nums">
-              {eta > 60 ? `${Math.floor(eta / 60)}m ` : ""}{Math.round(eta % 60)}s
-            </p>
-          </div>
-          <div className="w-2 h-10 border-r border-white/10" />
-          <div className="text-right">
-             <p className="text-[8px] font-black uppercase tracking-widest opacity-40">Status</p>
-             <p className="text-[10px] font-bold text-green-400 animate-pulse uppercase">En-Route</p>
-          </div>
+      {Object.keys(dispatches).length > 0 && (
+        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] flex flex-col gap-3 pointer-events-none">
+          {Object.entries(dispatches).slice(0, 3).map(([id, d]) => {
+            const etaSec = d?.etaSec;
+            const isMedical = d?.unitType === "MEDICAL";
+            return (
+              <div
+                key={id}
+                className={`px-7 py-4 border-2 rounded-[2rem] shadow-2xl flex items-center gap-6 text-white ${isMedical ? "bg-blue-900/80 border-blue-500/50 shadow-blue-500/20" : "bg-red-900/80 border-red-500/50 shadow-red-500/20"} backdrop-blur-lg`}
+              >
+                <div className="p-3 bg-white/10 rounded-2xl">
+                  {isMedical ? <Activity size={22} className="animate-pulse" /> : <Truck size={22} className="animate-bounce" />}
+                </div>
+                <div className="min-w-[140px]">
+                  <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60">Arriving In</p>
+                  <p className="text-2xl font-black tabular-nums">
+                    {etaSec == null ? "--" : etaSec > 60 ? `${Math.floor(etaSec / 60)}m ` : ""}{etaSec == null ? "" : `${Math.ceil(etaSec % 60)}s`}
+                  </p>
+                </div>
+                <div className="w-2 h-10 border-r border-white/10" />
+                <div className="text-right">
+                  <p className="text-[8px] font-black uppercase tracking-widest opacity-40">Status</p>
+                  <p className="text-[10px] font-bold text-green-400 animate-pulse uppercase">En-Route</p>
+                </div>
+              </div>
+            );
+          })}
+          {Object.keys(dispatches).length > 3 && (
+            <div className="text-center text-[10px] text-slate-300/70 font-semibold">
+              +{Object.keys(dispatches).length - 3} more en-route…
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -31,13 +31,27 @@ function AppDashboard() {
   const [pendingAlert, setPendingAlert] = useState(null); // { type } — waiting for location pin
   const [showNearbyServices, setShowNearbyServices] = useState(false);
   const [selectedAlertType, setSelectedAlertType] = useState("FIRE");
+  const [nearbyCenter, setNearbyCenter] = useState({ lat: 22.7196, lng: 75.8577 });
   const [enquiries, setEnquiries] = useState([]);
 
   useEffect(() => {
     const q = query(collection(db, "alerts"), orderBy("time", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setAlerts(data.filter(a => a.status !== "Resolved"));
+      const data = snapshot.docs.map(d => {
+        const raw = d.data() || {};
+        return {
+          id: d.id,
+          ...raw,
+          status: (raw.status || "").toString().toUpperCase(),
+          type: (raw.type || "").toString().toUpperCase(),
+        };
+      });
+      setAlerts(data.filter(a => a.status !== "RESOLVED"));
+    }, (err) => {
+      console.error("Alerts subscription error:", err);
+      toast.error("Feed not updating", {
+        description: err?.message || "Firestore subscription failed (check indexes/rules).",
+      });
     });
     return () => unsubscribe();
   }, []);
@@ -47,6 +61,11 @@ function AppDashboard() {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setStaff(data);
+    }, (err) => {
+      console.error("Staff subscription error:", err);
+      toast.error("Staff not updating", {
+        description: err?.message || "Firestore subscription failed (check indexes/rules).",
+      });
     });
     return () => unsubscribe();
   }, []);
@@ -55,13 +74,18 @@ function AppDashboard() {
     const q = query(collection(db, "enquiries"), where("status", "==", "PENDING"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setEnquiries(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    }, (err) => {
+      console.error("Enquiries subscription error:", err);
+      toast.error("Enquiries not updating", {
+        description: err?.message || "Firestore subscription failed (check indexes/rules).",
+      });
     });
     return () => unsubscribe();
   }, []);
 
   // Audio ping for PENDING_VERIFICATION
   useEffect(() => {
-    if (user?.role === 'staff' && !user?.onDuty) return;
+    if (user?.role?.toLowerCase() !== 'guest' && !user?.onDuty) return;
 
     const hasPending = alerts.some(a => a.status === "PENDING_VERIFICATION");
     if (!hasPending) return;
@@ -86,7 +110,7 @@ function AppDashboard() {
 
   // Siren for MEDICAL alerts
   useEffect(() => {
-    if (user?.role === 'staff' && !user?.onDuty) return;
+    if (user?.role?.toLowerCase() !== 'guest' && !user?.onDuty) return;
 
     const activeMedical = alerts.some(a => a.type === "MEDICAL" && a.status === "CONFIRMED");
     if (!activeMedical) return;
@@ -111,6 +135,12 @@ function AppDashboard() {
 
   // Handle staff confirmation/rejection of alerts
   const verifyAlert = async (id, status) => {
+    const role = (user?.role || "").toString().toLowerCase();
+    const canManage = role === "staff" || role === "admin";
+    if (!canManage) {
+      toast.error("Unauthorized", { description: "Only staff/admin can update incidents." });
+      return;
+    }
     const alertRef = doc(db, "alerts", id);
     const promise = updateDoc(alertRef, { status });
     
@@ -148,9 +178,18 @@ function AppDashboard() {
   // Step 2: called after user pins a location on the map
   const confirmAlert = async ({ type, coords, locationLabel }) => {
     setPendingAlert(null);
+    if (coords?.lat != null && coords?.lng != null) {
+      setNearbyCenter({ lat: coords.lat, lng: coords.lng });
+    }
     let finalStatus = "PENDING_VERIFICATION";
+
+    const reporterId = user?.id ?? (typeof user === "string" ? user : "");
+    const reporterName =
+      user?.name ||
+      (user?.role?.toLowerCase() === "guest" ? "Guest" : reporterId) ||
+      "Guest";
     
-    if (type === "MEDICAL" || user?.role === 'staff') {
+    if (type === "MEDICAL" || user?.role?.toLowerCase() !== 'guest') {
       finalStatus = "CONFIRMED";
     } else {
       // Threshold check
@@ -177,7 +216,9 @@ function AppDashboard() {
       status: finalStatus,
       location: locationLabel,
       coords,
-      triggeredBy: user?.id ?? user ?? "Guest",
+      triggeredBy: reporterId || "Guest",
+      triggeredByName: reporterName,
+      triggeredById: reporterId || "Guest",
       time: serverTimestamp(),
     });
     toast.promise(promise, {
@@ -188,6 +229,12 @@ function AppDashboard() {
   };
 
   const resolveAlert = async (id, type) => {
+    const role = (user?.role || "").toString().toLowerCase();
+    const canManage = role === "staff" || role === "admin";
+    if (!canManage) {
+      toast.error("Unauthorized", { description: "Only staff/admin can resolve incidents." });
+      return;
+    }
     const alertRef = doc(db, "alerts", id);
     const promise = updateDoc(alertRef, { status: "RESOLVED" });
 
@@ -254,7 +301,9 @@ function AppDashboard() {
             {user ? (
               <>
                 <div className="px-4 py-2 glass rounded-lg text-sm flex items-center gap-2">
-                  <span className="text-slate-400 mr-2 border-r border-white/10 pr-2 font-mono">{user?.id ?? user}</span>
+                  <span className="text-slate-200 mr-2 border-r border-white/10 pr-2 font-semibold">
+                    {user?.name || user?.id || user}
+                  </span>
                   {user?.role && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-md font-bold" style={{ background: user.role === 'staff' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)', color: user.role === 'staff' ? '#f87171' : '#94a3b8' }}>{user.role}</span>}
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                   System Active
@@ -294,7 +343,7 @@ function AppDashboard() {
             {/* Panel */}
             <div className="fixed top-20 right-6 z-50" role="dialog" aria-modal="true" aria-label="Login panel">
               <LoginPanel
-                onLogin={({ id, role }) => { setUser({ id, role }); setShowLogin(false); }}
+                onLogin={(u) => { setUser(u); setShowLogin(false); }}
                 onClose={() => setShowLogin(false)}
               />
             </div>
@@ -315,7 +364,7 @@ function AppDashboard() {
           isOpen={showNearbyServices}
           onClose={() => setShowNearbyServices(false)}
           emergencyType={selectedAlertType}
-          center={{ lat: 22.7196, lng: 75.8577 }}
+          center={nearbyCenter}
         />
 
         {/* Enquiry Notification */}
@@ -456,7 +505,12 @@ function AlertCard({ alert, onResolve, onConfirm, onDispatch, onReject, userRole
     OTHER: "border-slate-500/50 from-slate-500/10 to-transparent",
   };
 
-  const isPending = alert.status === "PENDING_VERIFICATION";
+  const status = (alert.status || "").toString().toUpperCase();
+  const isPending = status === "PENDING_VERIFICATION";
+  const role = (userRole || "").toString().toLowerCase();
+  const canManage = role === "staff" || role === "admin";
+  const canResolve = canManage && status !== "RESOLVED" && status !== "REJECTED";
+  const canDispatch = canManage && status === "CONFIRMED";
 
   return (
     <div className={`flex flex-col gap-3 p-5 rounded-2xl border-l-4 bg-gradient-to-r ${colors[alert.type || 'OTHER']} border ${isPending ? 'border-yellow-500/50 animate-pulse' : 'border-white/5'}`}>
@@ -465,63 +519,86 @@ function AlertCard({ alert, onResolve, onConfirm, onDispatch, onReject, userRole
           <h4 className="text-sm font-bold text-white uppercase tracking-wider">
             {alert.type} Emergency 
             {isPending && <span className="ml-2 text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full">UNVERIFIED</span>}
-            {alert.status === "CONFIRMED" && <span className="ml-2 text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full animate-pulse">CONFIRMED</span>}
-            {alert.status === "EN-ROUTE" && <span className="ml-2 text-[10px] bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded-full">EN-ROUTE</span>}
-            {alert.status === "RESOLVED" && <span className="ml-2 text-[10px] bg-green-500/20 text-green-500 px-2 py-0.5 rounded-full">RESOLVED</span>}
+            {status === "CONFIRMED" && <span className="ml-2 text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full animate-pulse">CONFIRMED</span>}
+            {status === "EN-ROUTE" && <span className="ml-2 text-[10px] bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded-full">EN-ROUTE</span>}
+            {status === "RESOLVED" && <span className="ml-2 text-[10px] bg-green-500/20 text-green-500 px-2 py-0.5 rounded-full">RESOLVED</span>}
           </h4>
           <p className="text-xs text-slate-400 flex items-center gap-1">
             <MapPin size={10} className="inline" /> {alert.location || "Location not set"}
           </p>
         </div>
-        {userRole === 'staff' && alert.status !== "RESOLVED" && (
-          <button 
-            onClick={onResolve}
-            aria-label={`Mark ${alert.type} incident as resolved`}
-            title={`Mark ${alert.type} incident as resolved`}
-            className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-500 rounded-lg btn-click-effect hover:bg-green-500 hover:text-white transition-all group"
-          >
-            <CheckCircle size={16} />
-            <span className="text-[10px] font-black tracking-widest hidden group-hover:inline uppercase">Resolve</span>
-          </button>
-        )}
+        {/* Keep header clean; resolution is handled in action area */}
       </div>
 
-      {isPending && userRole === 'staff' && (
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          <button 
-            onClick={onConfirm}
-            className="py-2 bg-red-600 hover:bg-red-500 text-white text-[10px] font-black rounded tracking-widest"
-          >
-            CONFIRM ALERT
-          </button>
-          <button 
-            onClick={onReject}
-            className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 text-[10px] font-bold rounded"
-          >
-            REJECT
-          </button>
+      {canManage && (
+        <div className="mt-1 grid grid-cols-2 gap-2">
+          {isPending && (
+            <>
+              <button
+                onClick={onConfirm}
+                className="h-10 rounded-xl bg-red-600/90 hover:bg-red-500 text-white text-[11px] font-black tracking-widest flex items-center justify-center gap-2 transition-all"
+              >
+                <CheckCircle size={16} />
+                CONFIRM
+              </button>
+              <button
+                onClick={onReject}
+                className="h-10 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-[11px] font-black tracking-widest flex items-center justify-center gap-2 transition-all border border-white/10"
+              >
+                <X size={16} />
+                REJECT
+              </button>
+            </>
+          )}
+
+          {canDispatch && (
+            <button
+              onClick={onDispatch}
+              className="col-span-2 h-10 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white text-[11px] font-black tracking-widest flex items-center justify-center gap-2 transition-all animate-pulse"
+            >
+              <Send size={16} />
+              DISPATCH TEAM
+            </button>
+          )}
+
+          {status === "EN-ROUTE" && (
+            <button
+              onClick={onResolve}
+              className="col-span-2 h-10 rounded-xl bg-green-600/90 hover:bg-green-500 text-white text-[11px] font-black tracking-widest flex items-center justify-center gap-2 transition-all"
+            >
+              <CheckCircle size={16} />
+              MARK RESOLVED
+            </button>
+          )}
+
+          {/* Fallback resolve (e.g. confirmed but no dispatch flow) */}
+          {canResolve && status !== "EN-ROUTE" && !isPending && !canDispatch && (
+            <button
+              onClick={onResolve}
+              className="col-span-2 h-10 rounded-xl bg-green-600/20 hover:bg-green-600/30 text-green-200 text-[11px] font-black tracking-widest flex items-center justify-center gap-2 transition-all border border-green-500/20"
+            >
+              <CheckCircle size={16} />
+              MARK RESOLVED
+            </button>
+          )}
         </div>
       )}
 
-      {alert.status === "CONFIRMED" && userRole === 'staff' && (
-         <button 
-          onClick={onDispatch}
-          className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black rounded tracking-widest mt-2 animate-pulse"
-        >
-          CONFIRM & DISPATCH
-        </button>
-      )}
 
 
-
-      {/* Reporter ID */}
-      {alert.triggeredBy && (
+      {/* Reporter */}
+      {(alert.triggeredByName || alert.triggeredById || alert.triggeredBy) && (
         <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2 min-w-0">
             <span className="text-[10px] text-slate-500 uppercase tracking-wider">Reported by</span>
-            <span className="text-[11px] font-mono font-bold text-slate-200 bg-white/5 px-2 py-0.5 rounded-md">
-              {alert.triggeredBy}
-            </span>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-slate-200 truncate">
+                {alert.triggeredByName || alert.triggeredBy || "Guest"}
+              </div>
+              <div className="text-[10px] font-mono text-slate-400 truncate">
+                {alert.triggeredById || alert.triggeredBy || ""}
+              </div>
+            </div>
           </div>
           <span className="text-[10px] text-slate-500">
             {alert.time?.toDate ? alert.time.toDate().toLocaleTimeString() : 'Just now'}
