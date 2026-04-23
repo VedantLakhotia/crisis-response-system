@@ -1,17 +1,37 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { db } from "./firebase";
-import { collection, addDoc, serverTimestamp, query, onSnapshot, orderBy, doc, updateDoc } from "firebase/firestore";
-import { Flame, Activity, ShieldAlert, AlertTriangle, Clock, CheckCircle, Navigation, LayoutDashboard, Settings, LogIn, LogOut, X, MapPin, Send } from "lucide-react";
+import { 
+  collection, addDoc, serverTimestamp, query, onSnapshot, 
+  orderBy, doc, updateDoc, getDocs, where, writeBatch 
+} from "firebase/firestore";
+import { 
+  Flame, Activity, ShieldAlert, AlertTriangle, Clock, 
+  CheckCircle, Navigation, LayoutDashboard, Settings, 
+  LogIn, LogOut, X, MapPin, Send, Phone, ShieldCheck 
+} from "lucide-react";
 import { Toaster, toast } from "sonner";
-import MapModule from "./MapComponent";
-import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 
-function App() {
+// Components
+import MapModule from "./MapComponent";
+import NearbyServices from "./components/NearbyServices";
+import DepartmentView from "./components/DepartmentView";
+import GuestSafety from "./components/GuestSafety";
+import HotelAdmin from "./components/HotelAdmin";
+import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
+
+// ==========================================
+// MAIN DASHBOARD COMPONENT
+// ==========================================
+function AppDashboard() {
   const [user, setUser] = useState(null); // { id, role } | null
   const [alerts, setAlerts] = useState([]);
   const [staff, setStaff] = useState([]);
   const [showLogin, setShowLogin] = useState(false);
   const [pendingAlert, setPendingAlert] = useState(null); // { type } — waiting for location pin
+  const [showNearbyServices, setShowNearbyServices] = useState(false);
+  const [selectedAlertType, setSelectedAlertType] = useState("FIRE");
+  const [enquiries, setEnquiries] = useState([]);
 
   useEffect(() => {
     const q = query(collection(db, "alerts"), orderBy("time", "desc"));
@@ -31,6 +51,84 @@ function App() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    const q = query(collection(db, "enquiries"), where("status", "==", "PENDING"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setEnquiries(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Audio ping for PENDING_VERIFICATION
+  useEffect(() => {
+    if (user?.role === 'staff' && !user?.onDuty) return;
+
+    const hasPending = alerts.some(a => a.status === "PENDING_VERIFICATION");
+    if (!hasPending) return;
+
+    // Use a simple AudioContext beep
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const interval = setInterval(() => {
+      if(ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+    }, 10000); // every 10 seconds
+    
+    return () => { clearInterval(interval); ctx.close(); };
+  }, [alerts]);
+
+  // Siren for MEDICAL alerts
+  useEffect(() => {
+    if (user?.role === 'staff' && !user?.onDuty) return;
+
+    const activeMedical = alerts.some(a => a.type === "MEDICAL" && a.status === "CONFIRMED");
+    if (!activeMedical) return;
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const interval = setInterval(() => {
+      if(ctx.state === 'suspended') ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(440, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.5);
+      gain.gain.setValueAtTime(0.05, ctx.currentTime);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    }, 1200); 
+    
+    return () => { clearInterval(interval); ctx.close(); };
+  }, [alerts]);
+
+  // Handle staff confirmation/rejection of alerts
+  const verifyAlert = async (id, status) => {
+    const alertRef = doc(db, "alerts", id);
+    const promise = updateDoc(alertRef, { status });
+    
+    // Log action
+    addDoc(collection(db, "logs"), {
+      staffName: user?.name || user?.id || "Staff",
+      action: status,
+      incidentId: id,
+      time: serverTimestamp()
+    });
+
+    toast.promise(promise, {
+      loading: "Updating status...",
+      success: `Alert marked as ${status}.`,
+      error: "Error updating status.",
+    });
+  };
+
   // Step 1: open location picker
   const sendAlert = (type) => {
     if (!user) {
@@ -41,27 +139,65 @@ function App() {
     setPendingAlert({ type });
   };
 
+  // Open nearby services modal
+  const openNearbyServices = (type) => {
+    setSelectedAlertType(type);
+    setShowNearbyServices(true);
+  };
+
   // Step 2: called after user pins a location on the map
   const confirmAlert = async ({ type, coords, locationLabel }) => {
     setPendingAlert(null);
+    let finalStatus = "PENDING_VERIFICATION";
+    
+    if (type === "MEDICAL" || user?.role === 'staff') {
+      finalStatus = "CONFIRMED";
+    } else {
+      // Threshold check
+      const q = query(
+        collection(db, "alerts"), 
+        where("type", "==", type),
+        where("location", "==", locationLabel),
+        where("status", "==", "PENDING_VERIFICATION")
+      );
+      const snapshot = await getDocs(q);
+      if (snapshot.docs.length >= 4) { // This is the 5th
+        finalStatus = "CONFIRMED";
+        // Batch update old ones
+        const batch = writeBatch(db);
+        snapshot.docs.forEach(d => {
+          batch.update(d.ref, { status: "CONFIRMED" });
+        });
+        await batch.commit();
+      }
+    }
+
     const promise = addDoc(collection(db, "alerts"), {
       type,
-      status: "Pending",
+      status: finalStatus,
       location: locationLabel,
       coords,
-      triggeredBy: user?.id ?? user,
+      triggeredBy: user?.id ?? user ?? "Guest",
       time: serverTimestamp(),
     });
     toast.promise(promise, {
       loading: `Dispatching ${type} alert...`,
-      success: `${type} alert sent! Location pinned on map.`,
+      success: `${type} alert sent! Status: ${finalStatus}`,
       error: `Failed to send ${type} alert.`,
     });
   };
 
   const resolveAlert = async (id, type) => {
     const alertRef = doc(db, "alerts", id);
-    const promise = updateDoc(alertRef, { status: "Resolved" });
+    const promise = updateDoc(alertRef, { status: "RESOLVED" });
+
+    // Log action
+    addDoc(collection(db, "logs"), {
+      staffName: user?.name || user?.id || "Staff",
+      action: "RESOLVED",
+      incidentId: id,
+      time: serverTimestamp()
+    });
 
     toast.promise(promise, {
       loading: "Resolving incident...",
@@ -93,6 +229,16 @@ function App() {
           <button aria-label="Settings" title="Settings">
             <Settings className="hover:text-white cursor-pointer transition-colors" />
           </button>
+          <div className="mt-auto mb-4 border-t border-white/5 pt-8">
+            <button 
+              onClick={() => window.location.href='/admin'} 
+              aria-label="Admin Portal" 
+              title="Admin Portal"
+              className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl hover:bg-indigo-500 hover:text-white transition-all shadow-lg shadow-indigo-500/20"
+            >
+              <ShieldCheck size={20} />
+            </button>
+          </div>
         </nav>
       </aside>
 
@@ -164,6 +310,37 @@ function App() {
           />
         )}
 
+        {/* Nearby Services Modal */}
+        <NearbyServices
+          isOpen={showNearbyServices}
+          onClose={() => setShowNearbyServices(false)}
+          emergencyType={selectedAlertType}
+          center={{ lat: 22.7196, lng: 75.8577 }}
+        />
+
+        {/* Enquiry Notification */}
+        {enquiries.length > 0 && (
+          <div className="fixed bottom-10 left-10 z-50 animate-bounce">
+            <div className="bg-red-600 text-white px-6 py-4 rounded-2xl shadow-[0_0_40px_rgba(220,38,38,0.6)] border-2 border-red-400 flex items-center gap-4">
+              <div className="w-3 h-3 bg-white rounded-full animate-ping" />
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-80">Department Enquiry</span>
+                <span className="text-sm font-bold">{enquiries[0].message}</span>
+              </div>
+              <button 
+                onClick={async () => {
+                   const batch = writeBatch(db);
+                   enquiries.forEach(e => batch.update(doc(db, "enquiries", e.id), { status: "RESOLVED" }));
+                   await batch.commit();
+                }}
+                className="ml-4 bg-white/20 hover:bg-white/30 px-3 py-1 rounded-lg text-[10px] font-black"
+              >
+                ACKNOWLEDGE
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-10 flex flex-col lg:flex-row gap-8">
           {/* Controls & Feed */}
           <div className="lg:w-1/3 flex flex-col gap-8">
@@ -171,11 +348,34 @@ function App() {
               <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
                 <Flame size={20} className="text-red-500" /> Panic Triggers
               </h2>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
                 <TriggerButton onClick={() => sendAlert("FIRE")} color="bg-red-500" icon={<Flame />} label="FIRE" />
                 <TriggerButton onClick={() => sendAlert("MEDICAL")} color="bg-blue-600" icon={<Activity />} label="MEDICAL" />
                 <TriggerButton onClick={() => sendAlert("SECURITY")} color="bg-orange-600" icon={<ShieldAlert />} label="SECURITY" />
                 <TriggerButton onClick={() => sendAlert("OTHER")} color="bg-slate-600" icon={<AlertTriangle />} label="OTHER" />
+              </div>
+              
+              {/* Emergency Services Quick Access */}
+              <div className="mt-6 pt-6 border-t border-white/10">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Quick Access</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => openNearbyServices("FIRE")}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 transition text-xs font-semibold"
+                    title="Find nearby fire stations"
+                  >
+                    <span>🚒</span>
+                    Fire Stations
+                  </button>
+                  <button
+                    onClick={() => openNearbyServices("MEDICAL")}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-semibold"
+                    title="Find nearby hospitals"
+                  >
+                    <span>🏥</span>
+                    Hospitals
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -190,14 +390,23 @@ function App() {
                     <p>All facilities secure</p>
                   </div>
                 ) : (
-                  alerts.map((alert) => (
-                    <AlertCard key={alert.id} alert={alert} onResolve={() => resolveAlert(alert.id, alert.type)} userRole={user?.role} />
+                  alerts
+                    .filter(a => a.status !== "RESOLVED" && a.status !== "REJECTED")
+                    .map((alert) => (
+                    <AlertCard 
+                      key={alert.id} 
+                      alert={alert} 
+                      onResolve={() => resolveAlert(alert.id, alert.type)} 
+                      onConfirm={() => verifyAlert(alert.id, "CONFIRMED")}
+                      onDispatch={() => verifyAlert(alert.id, "EN-ROUTE")}
+                      onReject={() => verifyAlert(alert.id, "REJECTED")}
+                      userRole={user?.role} 
+                    />
                   ))
                 )}
               </div>
             </section>
           </div>
-
           {/* Map Section */}
           <div className="flex-1 flex flex-col gap-6">
             <div className="flex-1 relative glass rounded-3xl overflow-hidden shadow-2xl p-2">
@@ -220,7 +429,9 @@ function App() {
   );
 }
 
-// Sub-components for cleaner code
+// ==========================================
+// SUB-COMPONENTS & UTILS
+// ==========================================
 function TriggerButton({ onClick, color, icon, label }) {
   return (
     <button 
@@ -237,7 +448,7 @@ function TriggerButton({ onClick, color, icon, label }) {
   );
 }
 
-function AlertCard({ alert, onResolve, userRole }) {
+function AlertCard({ alert, onResolve, onConfirm, onDispatch, onReject, userRole }) {
   const colors = {
     FIRE: "border-red-500/50 from-red-500/10 to-transparent",
     MEDICAL: "border-blue-500/50 from-blue-500/10 to-transparent",
@@ -245,39 +456,81 @@ function AlertCard({ alert, onResolve, userRole }) {
     OTHER: "border-slate-500/50 from-slate-500/10 to-transparent",
   };
 
+  const isPending = alert.status === "PENDING_VERIFICATION";
+
   return (
-    <div className={`flex flex-col gap-3 p-5 rounded-2xl border-l-4 bg-gradient-to-r ${colors[alert.type || 'OTHER']} border border-white/5`}>
+    <div className={`flex flex-col gap-3 p-5 rounded-2xl border-l-4 bg-gradient-to-r ${colors[alert.type || 'OTHER']} border ${isPending ? 'border-yellow-500/50 animate-pulse' : 'border-white/5'}`}>
       <div className="flex justify-between items-start">
         <div className="flex flex-col gap-1">
-          <h4 className="text-sm font-bold text-white uppercase tracking-wider">{alert.type} Emergency</h4>
+          <h4 className="text-sm font-bold text-white uppercase tracking-wider">
+            {alert.type} Emergency 
+            {isPending && <span className="ml-2 text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded-full">UNVERIFIED</span>}
+            {alert.status === "CONFIRMED" && <span className="ml-2 text-[10px] bg-red-500/20 text-red-500 px-2 py-0.5 rounded-full animate-pulse">CONFIRMED</span>}
+            {alert.status === "EN-ROUTE" && <span className="ml-2 text-[10px] bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded-full">EN-ROUTE</span>}
+            {alert.status === "RESOLVED" && <span className="ml-2 text-[10px] bg-green-500/20 text-green-500 px-2 py-0.5 rounded-full">RESOLVED</span>}
+          </h4>
           <p className="text-xs text-slate-400 flex items-center gap-1">
             <MapPin size={10} className="inline" /> {alert.location || "Location not set"}
           </p>
         </div>
-        {userRole === 'staff' && (
+        {userRole === 'staff' && alert.status !== "RESOLVED" && (
           <button 
             onClick={onResolve}
             aria-label={`Mark ${alert.type} incident as resolved`}
             title={`Mark ${alert.type} incident as resolved`}
-            className="p-2 bg-green-500/20 text-green-500 rounded-lg btn-click-effect hover:bg-green-500 hover:text-white flex-shrink-0"
+            className="flex items-center gap-2 px-3 py-1.5 bg-green-500/20 text-green-500 rounded-lg btn-click-effect hover:bg-green-500 hover:text-white transition-all group"
           >
-            <CheckCircle size={18} />
+            <CheckCircle size={16} />
+            <span className="text-[10px] font-black tracking-widest hidden group-hover:inline uppercase">Resolve</span>
           </button>
         )}
       </div>
+
+      {isPending && userRole === 'staff' && (
+        <div className="grid grid-cols-2 gap-2 mt-2">
+          <button 
+            onClick={onConfirm}
+            className="py-2 bg-red-600 hover:bg-red-500 text-white text-[10px] font-black rounded tracking-widest"
+          >
+            CONFIRM ALERT
+          </button>
+          <button 
+            onClick={onReject}
+            className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 text-[10px] font-bold rounded"
+          >
+            REJECT
+          </button>
+        </div>
+      )}
+
+      {alert.status === "CONFIRMED" && userRole === 'staff' && (
+         <button 
+          onClick={onDispatch}
+          className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-black rounded tracking-widest mt-2 animate-pulse"
+        >
+          CONFIRM & DISPATCH
+        </button>
+      )}
+
+
+
       {/* Reporter ID */}
       {alert.triggeredBy && (
-        <div className="flex items-center gap-2 pt-2 border-t border-white/5">
-          <span className="text-[10px] text-slate-500 uppercase tracking-wider">Reported by</span>
-          <span className="text-[11px] font-mono font-bold text-slate-200 bg-white/5 px-2 py-0.5 rounded-md">
-            {alert.triggeredBy}
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Reported by</span>
+            <span className="text-[11px] font-mono font-bold text-slate-200 bg-white/5 px-2 py-0.5 rounded-md">
+              {alert.triggeredBy}
+            </span>
+          </div>
+          <span className="text-[10px] text-slate-500">
+            {alert.time?.toDate ? alert.time.toDate().toLocaleTimeString() : 'Just now'}
           </span>
         </div>
       )}
     </div>
   );
 }
-
 
 function StatsCard({ label, value, color }) {
   return (
@@ -302,9 +555,39 @@ function LoginPanel({ onLogin, onClose }) {
     e.preventDefault();
     if (id.trim() === "") return;
     setIsLoading(true);
-    // Small delay for UX feel
-    await new Promise(r => setTimeout(r, 600));
-    onLogin({ id: id.trim().toUpperCase(), role });
+    
+    const typedId = id.trim();
+
+    if (role === 'staff' || role === 'admin') {
+      try {
+        const staffRef = collection(db, "staff");
+        const snapshot = await getDocs(staffRef);
+        
+        // Case-insensitive match
+        const match = snapshot.docs.find(d => {
+          const staffId = d.data().id || "";
+          return staffId.toLowerCase() === typedId.toLowerCase();
+        });
+        
+        if (match) {
+          const data = match.data();
+          onLogin({ 
+            id: data.id, 
+            role: data.role || role, 
+            name: data.name,
+            onDuty: data.onDuty ?? true 
+          });
+        } else {
+          toast.error("Invalid ID", { description: "This ID is not on the authorized staff list." });
+        }
+      } catch (err) {
+        console.error("Login Error:", err);
+        toast.error("System Error", { description: "Could not connect to authentication server." });
+      }
+    } else {
+      onLogin({ id: typedId, role: 'guest' });
+    }
+    
     setIsLoading(false);
   };
 
@@ -342,19 +625,19 @@ function LoginPanel({ onLogin, onClose }) {
       </div>
 
       {/* Role tabs */}
-      <div className="mx-5 mb-4 grid grid-cols-2 gap-1 p-1 bg-white/5 rounded-xl border border-white/5">
-        {["staff", "guest"].map((r) => (
+      <div className="mx-5 mb-4 grid grid-cols-3 gap-1 p-1 bg-white/5 rounded-xl border border-white/5">
+        {["staff", "admin", "guest"].map((r) => (
           <button
             key={r}
             type="button"
             onClick={() => { setRole(r); setId(""); setTimeout(() => inputRef.current?.focus(), 50); }}
-            className={`py-2 rounded-lg text-xs font-semibold tracking-wide transition-all duration-200 capitalize ${
+            className={`py-2 rounded-lg text-[10px] font-bold tracking-wide transition-all duration-200 capitalize ${
               role === r
                 ? "bg-red-600 text-white shadow-md shadow-red-900/40"
                 : "text-slate-500 hover:text-slate-300"
             }`}
           >
-            {r === "staff" ? "👤 Staff" : "🛎️ Guest"}
+            {r === "staff" ? "👤 Staff" : r === "admin" ? "🛡️ Admin" : "🛎️ Guest"}
           </button>
         ))}
       </div>
@@ -735,4 +1018,18 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
   );
 }
 
-export default App;
+// ==========================================
+// MAIN APP ENTRY (ROUTING)
+// ==========================================
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<AppDashboard />} />
+        <Route path="/admin" element={<HotelAdmin />} />
+        <Route path="/guest" element={<GuestSafety />} />
+        <Route path="/department" element={<DepartmentView />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}

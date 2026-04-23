@@ -1,6 +1,7 @@
 // 1. Import the necessary tools from Firebase
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 // 2. This is the configuration from your photo (The Address)
 const firebaseConfig = {
@@ -15,6 +16,6 @@ const firebaseConfig = {
 // 3. Initialize the app
 const app = initializeApp(firebaseConfig);
 
-// 4. Initialize the Database and EXPORT it
-// This 'db' variable is what App.jsx uses to send/receive alerts
+// 4. Initialize the Database and Auth, and EXPORT them
 export const db = getFirestore(app);
+export const auth = getAuth(app);

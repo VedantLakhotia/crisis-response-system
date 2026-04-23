@@ -23,8 +23,13 @@ body {
   min-height: 100vh;
 }
 
+/* Utilities */
 .glass {
   @apply bg-white/5 backdrop-blur-xl border border-white/10;
+}
+
+.glass-heavy {
+  @apply bg-black/60 backdrop-blur-2xl border border-white/10 shadow-2xl;
 }
 
 .btn-click-effect {
@@ -33,23 +38,23 @@ body {
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #0a0a0c;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #1e1e24;
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2e2e38;
+  background: rgba(255, 255, 255, 0.2);
 }
 
-/* Login panel entrance animation */
+/* Animations */
 @keyframes slideDown {
   from {
     opacity: 0;
@@ -59,5 +64,69 @@ body {
     opacity: 1;
     transform: translateY(0) scale(1);
   }
+}
+
+@keyframes pulse-red {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 20px 10px rgba(239, 68, 68, 0); }
+}
+
+.animate-pulse-red {
+  animation: pulse-red 2s infinite;
+}
+
+/* Hotel Management Dashboard Utilities */
+.glow-green {
+  border-color: rgba(34, 197, 94, 0.5);
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.25), inset 0 0 15px rgba(34, 197, 94, 0.05);
+}
+
+.glow-indigo {
+  border-color: rgba(99, 102, 241, 0.5);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.25);
+}
+
+.staff-off-duty {
+  opacity: 0.45;
+  filter: grayscale(0.3);
+}
+
+.modal-overlay {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.93) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-scaleIn {
+  animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(34, 197, 94, 0.2); }
+  50% { box-shadow: 0 0 25px rgba(34, 197, 94, 0.4); }
+}
+
+.animate-glow-pulse {
+  animation: glowPulse 2s ease-in-out infinite;
 }
 
