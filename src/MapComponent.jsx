@@ -18,7 +18,7 @@ L.Icon.Default.mergeOptions({
 });
 
 // --- HELPER: CONVERT REACT ICON TO LEAFLET DIV ICON ---
-const getCustomIcon = (type, isTarget = false) => {
+const getCustomIcon = (type, isTarget = false, angle = 0) => {
   let iconHtml = "";
   let className = "relative flex items-center justify-center";
 
@@ -75,13 +75,25 @@ const getCustomIcon = (type, isTarget = false) => {
       );
       break;
     case 'VEHICLE_FIRE':
-      iconHtml = renderToString(<Truck size={32} className="text-red-500 bg-black/80 p-1.5 rounded-lg border-2 border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" />);
+      iconHtml = renderToString(
+        <div style={{ transform: `rotate(${angle}deg) ${Math.abs(angle) > 90 ? 'scaleY(-1)' : ''}`, transition: 'transform 0.2s linear' }}>
+          <Truck size={32} className="text-red-500 bg-black/80 p-1.5 rounded-lg border-2 border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" />
+        </div>
+      );
       break;
     case 'VEHICLE_MEDICAL':
-      iconHtml = renderToString(<Truck size={32} className="text-blue-500 bg-black/80 p-1.5 rounded-lg border-2 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" />);
+      iconHtml = renderToString(
+        <div style={{ transform: `rotate(${angle}deg) ${Math.abs(angle) > 90 ? 'scaleY(-1)' : ''}`, transition: 'transform 0.2s linear' }}>
+          <Truck size={32} className="text-blue-500 bg-black/80 p-1.5 rounded-lg border-2 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" />
+        </div>
+      );
       break;
     case 'VEHICLE_SECURITY':
-      iconHtml = renderToString(<Truck size={32} className="text-orange-500 bg-black/80 p-1.5 rounded-lg border-2 border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.5)]" />);
+      iconHtml = renderToString(
+        <div style={{ transform: `rotate(${angle}deg) ${Math.abs(angle) > 90 ? 'scaleY(-1)' : ''}`, transition: 'transform 0.2s linear' }}>
+          <Truck size={32} className="text-orange-500 bg-black/80 p-1.5 rounded-lg border-2 border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.5)]" />
+        </div>
+      );
       break;
     case 'TARGET':
       iconHtml = renderToString(
@@ -219,6 +231,14 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
           if (data.routes && data.routes[0]) {
             const coordinates = data.routes[0].geometry.coordinates; // [lng, lat]
             const totalDuration = data.routes[0].duration; // seconds
+            
+            // Calculate cumulative distance along polyline for smooth interpolation
+            const dist = (p1, p2) => Math.sqrt(Math.pow(p1[0]-p2[0], 2) + Math.pow(p1[1]-p2[1], 2));
+            const cumDists = [0];
+            for (let i = 1; i < coordinates.length; i++) {
+              cumDists.push(cumDists[i-1] + dist(coordinates[i-1], coordinates[i]));
+            }
+            const totalDist = cumDists[cumDists.length - 1];
 
             // Resume from stored start time if we have one (page-refresh resilience)
             const storedTimes = getStoredTimes();
@@ -243,31 +263,45 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
               // Calculate progress (0 to 1)
               const progress = Math.min(1, elapsedSec / totalDuration);
               
-              // Interpolate vehicle position along the route
-              const targetIndex = Math.min(
-                Math.floor(progress * (coordinates.length - 1)),
-                coordinates.length - 1
-              );
+              // Interpolate vehicle position smoothly along the actual physical distance of the route
+              let currentPos = [targetPos.lat, targetPos.lng]; // fallback
+              let currentAngle = 0;
               
-              let currentPos;
-              if (progress >= 1) {
-                currentPos = [targetPos.lat, targetPos.lng];
-              } else if (targetIndex >= coordinates.length - 1) {
+              if (progress >= 1 || totalDist === 0) {
                 currentPos = [targetPos.lat, targetPos.lng];
               } else {
-                // Linear interpolation between waypoints
-                const [lng1, lat1] = coordinates[targetIndex];
-                const [lng2, lat2] = coordinates[Math.min(targetIndex + 1, coordinates.length - 1)];
-                const segmentProgress = (progress * (coordinates.length - 1)) - targetIndex;
-                const lat = lat1 + (lat2 - lat1) * segmentProgress;
-                const lng = lng1 + (lng2 - lng1) * segmentProgress;
-                currentPos = [lat, lng];
+                const targetDist = progress * totalDist;
+                for (let i = 1; i < coordinates.length; i++) {
+                  if (cumDists[i] >= targetDist) {
+                    const segmentDist = cumDists[i] - cumDists[i-1];
+                    const segmentProgress = segmentDist === 0 ? 0 : (targetDist - cumDists[i-1]) / segmentDist;
+                    const [lng1, lat1] = coordinates[i-1];
+                    const [lng2, lat2] = coordinates[i];
+                    currentPos = [
+                      lat1 + (lat2 - lat1) * segmentProgress,
+                      lng1 + (lng2 - lng1) * segmentProgress
+                    ];
+                    
+                    const dy = lat2 - lat1;
+                    const dx = lng2 - lng1;
+                    if (dx !== 0 || dy !== 0) {
+                      currentAngle = Math.atan2(-dy, dx) * (180 / Math.PI);
+                    }
+                    break;
+                  }
+                }
               }
               
-              setDispatches(prev => ({
-                ...prev,
-                [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos }
-              }));
+              setDispatches(prev => {
+                let finalAngle = currentAngle;
+                if (progress >= 1 && prev[alert.id]) {
+                  finalAngle = prev[alert.id].angle || 0; // retain angle when stopped
+                }
+                return {
+                  ...prev,
+                  [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos, angle: finalAngle }
+                };
+              });
               
               if (remaining <= 0) {
                 clearInterval(updateTimer);
@@ -316,8 +350,9 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
         className="w-full h-full"
       >
         <TileLayer
-          url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+          className="map-tiles-dark"
         />
 
         {/* 1. FIRE STATIONS */}
@@ -398,7 +433,7 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
             <Marker
               key={id}
               position={d.truckPos}
-              icon={getCustomIcon(unitIconType)}
+              icon={getCustomIcon(unitIconType, false, d.angle || 0)}
             />
           ) : null
         })}
