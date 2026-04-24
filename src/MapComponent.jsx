@@ -5,6 +5,7 @@ import { renderToString } from 'react-dom/server';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect, useRef } from 'react';
 import { db } from "./firebase";
+import { doc, updateDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAllServices } from './utils/nearbyServices.js';
 import { Flame, HeartPulse, ShieldAlert, AlertTriangle, Building2, Activity, Truck, Navigation, Info, Hospital as HospitalIcon } from 'lucide-react';
 
@@ -65,11 +66,22 @@ const getCustomIcon = (type, isTarget = false) => {
         </div>
       );
       break;
+    case 'POLICE_STATION':
+      iconHtml = renderToString(
+        <div className="w-10 h-10 bg-orange-900/80 border-2 border-orange-500/50 rounded-lg flex items-center justify-center shadow-lg relative">
+          <ShieldAlert size={20} className="text-white" />
+          <span className="absolute -bottom-2 bg-orange-600 text-[8px] font-black px-1 rounded text-white">PS</span>
+        </div>
+      );
+      break;
     case 'VEHICLE_FIRE':
-      iconHtml = renderToString(<Truck size={32} className="text-red-500 bg-black/80 p-1.5 rounded-lg border border-red-400" />);
+      iconHtml = renderToString(<Truck size={32} className="text-red-500 bg-black/80 p-1.5 rounded-lg border-2 border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.5)]" />);
       break;
     case 'VEHICLE_MEDICAL':
-      iconHtml = renderToString(<Activity size={32} className="text-blue-500 bg-black/80 p-1.5 rounded-lg border border-blue-400" />);
+      iconHtml = renderToString(<Truck size={32} className="text-blue-500 bg-black/80 p-1.5 rounded-lg border-2 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]" />);
+      break;
+    case 'VEHICLE_SECURITY':
+      iconHtml = renderToString(<Truck size={32} className="text-orange-500 bg-black/80 p-1.5 rounded-lg border-2 border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.5)]" />);
       break;
     case 'TARGET':
       iconHtml = renderToString(
@@ -93,10 +105,24 @@ const getCustomIcon = (type, isTarget = false) => {
   });
 };
 
+// --- DISPATCH TIME PERSISTENCE (survives page refresh) ---
+const DISPATCH_TIMES_KEY = 'crisisDispatchTimes';
+const getStoredTimes = () => {
+  try { return JSON.parse(sessionStorage.getItem(DISPATCH_TIMES_KEY) || '{}'); } catch { return {}; }
+};
+const saveDispatchTime = (id, ms) => {
+  const t = getStoredTimes(); t[id] = ms;
+  try { sessionStorage.setItem(DISPATCH_TIMES_KEY, JSON.stringify(t)); } catch { /* noop */ }
+};
+const removeDispatchTime = (id) => {
+  const t = getStoredTimes(); delete t[id];
+  try { sessionStorage.setItem(DISPATCH_TIMES_KEY, JSON.stringify(t)); } catch { /* noop */ }
+};
+
 // --- MAIN ENHANCED MAP COMPONENT ---
 function MapComponent({ alerts = [], staff = [], showServices = true }) {
   const hotelCenter = [22.7196, 75.8577];
-  const [services, setServices] = useState({ fireStations: [], hospitals: [] });
+  const [services, setServices] = useState({ fireStations: [], hospitals: [], policeStations: [] });
   // Multiple simultaneous dispatches: { [alertId]: { etaSec, truckPos: [lat,lng], unitType } }
   const [dispatches, setDispatches] = useState({});
   const [hoveredName, setHoveredName] = useState(null);
@@ -104,7 +130,8 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
 
   useEffect(() => {
     if (showServices) {
-      setServices(getAllServices());
+      const allServices = getAllServices();
+      setServices(allServices);
     }
   }, [showServices]);
 
@@ -117,6 +144,7 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
       if (!enRouteIds.has(id)) {
         try { ctrl?.stop?.(); } catch { /* noop */ }
         controllersRef.current.delete(id);
+        removeDispatchTime(id);
         setDispatches(prev => {
           if (!prev[id]) return prev;
           const next = { ...prev };
@@ -131,20 +159,39 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
       if (controllersRef.current.has(alert.id)) return;
 
       const unitType = alert.type || "FIRE";
-      // 1. Find nearest station/hospital
-      const serviceList = unitType === "MEDICAL" ? services.hospitals : services.fireStations;
+      // 1. Find NEAREST station/hospital to crisis location
+      let serviceList = services.fireStations;
+      if (unitType === "MEDICAL") serviceList = services.hospitals;
+      else if (unitType === "SECURITY") serviceList = services.policeStations;
+
       let nearestService = null;
+      
       if (serviceList && serviceList.length > 0 && alert.coords) {
         nearestService = serviceList.reduce((prev, curr) => {
-          const d1 = Math.sqrt(Math.pow(curr.coords.lat - alert.coords.lat, 2) + Math.pow(curr.coords.lng - alert.coords.lng, 2));
-          const d2 = Math.sqrt(Math.pow(prev.coords.lat - alert.coords.lat, 2) + Math.pow(prev.coords.lng - alert.coords.lng, 2));
+          // Calculate Euclidean distance to find nearest
+          const d1 = Math.sqrt(
+            Math.pow(curr.coords.lat - alert.coords.lat, 2) + 
+            Math.pow(curr.coords.lng - alert.coords.lng, 2)
+          );
+          const d2 = Math.sqrt(
+            Math.pow(prev.coords.lat - alert.coords.lat, 2) + 
+            Math.pow(prev.coords.lng - alert.coords.lng, 2)
+          );
           return d1 < d2 ? curr : prev;
         });
+        
+        // Log dispatch origin
+        console.log(`[DISPATCH] ${unitType} from ${nearestService.name} to ${alert.location}`);
       }
 
-      const startPos = nearestService ? nearestService.coords : (
-        unitType === "MEDICAL" ? { lat: 22.7300, lng: 75.8700 } : { lat: 22.6900, lng: 75.8300 }
-      );
+      // Use nearest service if available, otherwise fallback
+      let startPos = { lat: 22.6900, lng: 75.8300 }; // Default Fire
+      if (nearestService) {
+        startPos = nearestService.coords;
+      } else {
+        if (unitType === "MEDICAL") startPos = { lat: 22.7300, lng: 75.8700 };
+        else if (unitType === "SECURITY") startPos = { lat: 22.7150, lng: 75.8550 };
+      }
       const targetPos = alert.coords;
 
       let updateTimer = null;
@@ -172,11 +219,19 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
           if (data.routes && data.routes[0]) {
             const coordinates = data.routes[0].geometry.coordinates; // [lng, lat]
             const totalDuration = data.routes[0].duration; // seconds
-            const startMs = Date.now();
+
+            // Resume from stored start time if we have one (page-refresh resilience)
+            const storedTimes = getStoredTimes();
+            const startMs = storedTimes[alert.id] ?? Date.now();
+            if (!storedTimes[alert.id]) saveDispatchTime(alert.id, startMs);
+
+            // Calculate the correct remaining time immediately (avoids glitch on reload)
+            const elapsedOnLoad = (Date.now() - startMs) / 1000;
+            const remainingOnLoad = Math.max(0, totalDuration - elapsedOnLoad);
 
             setDispatches(prev => ({
               ...prev,
-              [alert.id]: { ...(prev[alert.id] || {}), etaSec: totalDuration, unitType }
+              [alert.id]: { ...(prev[alert.id] || {}), etaSec: remainingOnLoad, unitType }
             }));
 
             // SYNCHRONIZED UPDATE: Use elapsed time for both ETA and vehicle position
@@ -214,7 +269,25 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
                 [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos }
               }));
               
-              if (remaining <= 0) clearInterval(updateTimer);
+              if (remaining <= 0) {
+                clearInterval(updateTimer);
+                // Auto-resolve: vehicle has arrived at crisis location
+                (async () => {
+                  try {
+                    await updateDoc(doc(db, "alerts", alert.id), { status: "RESOLVED" });
+                    await addDoc(collection(db, "logs"), {
+                      staffName: "Dispatch System",
+                      action: "RESOLVED",
+                      incidentId: alert.id,
+                      time: serverTimestamp(),
+                      note: "Auto-resolved: response unit arrived on scene"
+                    });
+                    console.log(`[DISPATCH] Alert ${alert.id} auto-resolved — unit arrived.`);
+                  } catch (err) {
+                    console.error("Auto-resolve failed:", err);
+                  }
+                })();
+              }
             }, 100);
           }
         } catch (err) {
@@ -235,7 +308,7 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
   }, []);
 
   return (
-    <div className="relative h-[500px] w-full rounded-3xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-white/5 bg-black z-0">
+    <div className="relative h-[600px] w-full rounded-3xl overflow-hidden shadow-lg border border-white/10 bg-black z-0">
       <MapContainer 
         center={hotelCenter} 
         zoom={14} 
@@ -243,8 +316,8 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
         className="w-full h-full"
       >
         <TileLayer
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png"
+          attribution='&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         />
 
         {/* 1. FIRE STATIONS */}
@@ -268,6 +341,19 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
             icon={getCustomIcon('HOSPITAL')}
             eventHandlers={{
               mouseover: () => setHoveredName(`Hospital: ${hospital.name}`),
+              mouseout: () => setHoveredName(null),
+            }}
+          />
+        ))}
+
+        {/* 2.5 POLICE STATIONS */}
+        {showServices && services.policeStations && services.policeStations.map((station) => (
+          <Marker 
+            key={station.id} 
+            position={[station.coords.lat, station.coords.lng]}
+            icon={getCustomIcon('POLICE_STATION')}
+            eventHandlers={{
+              mouseover: () => setHoveredName(`Police Station: ${station.name}`),
               mouseout: () => setHoveredName(null),
             }}
           />
@@ -303,15 +389,19 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
         ))}
 
         {/* 5. DISPATCH UNIT TRACKING */}
-        {Object.entries(dispatches).map(([id, d]) => (
-          d?.truckPos ? (
+        {Object.entries(dispatches).map(([id, d]) => {
+          let unitIconType = "VEHICLE_FIRE";
+          if (d.unitType === "MEDICAL") unitIconType = "VEHICLE_MEDICAL";
+          else if (d.unitType === "SECURITY") unitIconType = "VEHICLE_SECURITY";
+
+          return d?.truckPos ? (
             <Marker
               key={id}
               position={d.truckPos}
-              icon={getCustomIcon(d.unitType === "MEDICAL" ? "VEHICLE_MEDICAL" : "VEHICLE_FIRE")}
+              icon={getCustomIcon(unitIconType)}
             />
           ) : null
-        ))}
+        })}
       </MapContainer>
 
       {/* Floating Tooltip */}
@@ -336,35 +426,40 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
       </div>
 
       {Object.keys(dispatches).length > 0 && (
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-[1000] flex flex-col gap-3 pointer-events-none">
+        <div className="absolute bottom-3 right-3 z-[1000] flex flex-col gap-2 pointer-events-none" style={{ maxWidth: '220px' }}>
           {Object.entries(dispatches).slice(0, 3).map(([id, d]) => {
             const etaSec = d?.etaSec;
-            const isMedical = d?.unitType === "MEDICAL";
+            const unitType = d?.unitType || "FIRE";
+            const isMedical = unitType === "MEDICAL";
+            const isSecurity = unitType === "SECURITY";
+            
+            let cardColorClass = "bg-red-900/80 border-red-500/50 shadow-red-500/20";
+            if (isMedical) cardColorClass = "bg-blue-900/80 border-blue-500/50 shadow-blue-500/20";
+            else if (isSecurity) cardColorClass = "bg-orange-900/80 border-orange-500/50 shadow-orange-500/20";
+
             return (
               <div
                 key={id}
-                className={`px-7 py-4 border-2 rounded-[2rem] shadow-2xl flex items-center gap-6 text-white ${isMedical ? "bg-blue-900/80 border-blue-500/50 shadow-blue-500/20" : "bg-red-900/80 border-red-500/50 shadow-red-500/20"} backdrop-blur-lg`}
+                className={`px-3 py-2 border rounded-xl shadow-lg flex items-center gap-3 text-white ${cardColorClass} backdrop-blur-lg`}
               >
-                <div className="p-3 bg-white/10 rounded-2xl">
-                  {isMedical ? <Activity size={22} className="animate-pulse" /> : <Truck size={22} className="animate-bounce" />}
+                <div className="p-1.5 bg-white/10 rounded-lg">
+                  {isMedical ? <Truck size={16} className="text-blue-400 animate-pulse" /> : isSecurity ? <Truck size={16} className="text-orange-400 animate-pulse" /> : <Truck size={16} className="text-red-400 animate-bounce" />}
                 </div>
-                <div className="min-w-[140px]">
-                  <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-60">Arriving In</p>
-                  <p className="text-2xl font-black tabular-nums">
+                <div className="flex-1 min-w-0">
+                  <p className="text-[8px] font-black uppercase tracking-[0.15em] opacity-60">ETA</p>
+                  <p className="text-sm font-black tabular-nums leading-tight">
                     {etaSec == null ? "--" : etaSec > 60 ? `${Math.floor(etaSec / 60)}m ` : ""}{etaSec == null ? "" : `${Math.ceil(etaSec % 60)}s`}
                   </p>
                 </div>
-                <div className="w-2 h-10 border-r border-white/10" />
                 <div className="text-right">
-                  <p className="text-[8px] font-black uppercase tracking-widest opacity-40">Status</p>
-                  <p className="text-[10px] font-bold text-green-400 animate-pulse uppercase">En-Route</p>
+                  <p className="text-[7px] font-bold text-green-400 animate-pulse uppercase">En-Route</p>
                 </div>
               </div>
             );
           })}
           {Object.keys(dispatches).length > 3 && (
-            <div className="text-center text-[10px] text-slate-300/70 font-semibold">
-              +{Object.keys(dispatches).length - 3} more en-route…
+            <div className="text-center text-[9px] text-slate-300/70 font-semibold">
+              +{Object.keys(dispatches).length - 3} more
             </div>
           )}
         </div>

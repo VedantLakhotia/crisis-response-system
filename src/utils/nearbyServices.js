@@ -77,14 +77,38 @@ const MOCK_SERVICES = {
       beds: 350,
       services: ['ICU', 'Surgery', 'Emergency']
     }
+  ],
+  policeStations: [
+    {
+      id: 'ps-1',
+      name: 'Indore Central Police Station',
+      type: 'Police Station',
+      coords: { lat: 22.7150, lng: 75.8550 },
+      address: 'MG Road, Indore',
+      contact: '+91-731-2527177',
+      distance: 0.8,
+      responseTime: '3-7 min',
+      availability: 'Active'
+    },
+    {
+      id: 'ps-2',
+      name: 'Vijay Nagar Police Station',
+      type: 'Police Station',
+      coords: { lat: 22.7500, lng: 75.8900 },
+      address: 'Vijay Nagar, Indore',
+      contact: '+91-731-2558888',
+      distance: 4.2,
+      responseTime: '5-12 min',
+      availability: 'Active'
+    }
   ]
 };
 
 /**
- * Find nearby fire stations and hospitals
+ * Find nearby fire stations, hospitals and police stations
  * @param {Object} center - Center coordinates {lat, lng}
  * @param {number} radiusKm - Search radius in kilometers (default: 5)
- * @returns {Object} { fireStations, hospitals }
+ * @returns {Object} { fireStations, hospitals, policeStations }
  */
 export async function findNearbyServices(center, radiusKm = 5) {
   try {
@@ -98,15 +122,20 @@ export async function findNearbyServices(center, radiusKm = 5) {
     const hospitals = MOCK_SERVICES.hospitals
       .filter(h => calculateDistance(center, h.coords) <= radiusKm)
       .sort((a, b) => calculateDistance(center, a.coords) - calculateDistance(center, b.coords));
+
+    const policeStations = MOCK_SERVICES.policeStations
+      .filter(ps => calculateDistance(center, ps.coords) <= radiusKm)
+      .sort((a, b) => calculateDistance(center, a.coords) - calculateDistance(center, b.coords));
     
     return {
       fireStations,
       hospitals,
+      policeStations,
       timestamp: new Date().toISOString()
     };
   } catch (error) {
     console.error('Error finding nearby services:', error);
-    return { fireStations: [], hospitals: [], error: error.message };
+    return { fireStations: [], hospitals: [], policeStations: [], error: error.message };
   }
 }
 

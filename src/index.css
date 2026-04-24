@@ -130,3 +130,16 @@ body {
   animation: glowPulse 2s ease-in-out infinite;
 }
 
+/* Hide Leaflet attribution bar to prevent UI overlap */
+.leaflet-control-attribution {
+  display: none !important;
+}
+
+/* Invisible scrollbar — keeps scroll, hides the track */
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
+}

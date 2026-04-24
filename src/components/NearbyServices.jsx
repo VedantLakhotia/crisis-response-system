@@ -18,10 +18,12 @@ function NearbyServices({
   onClose = () => {},
   emergencyType = 'FIRE' 
 }) {
-  const [services, setServices] = useState({ fireStations: [], hospitals: [] });
+  const [services, setServices] = useState({ fireStations: [], hospitals: [], policeStations: [] });
   const [loading, setLoading] = useState(false);
   const emergencyKey = (emergencyType || "").toString().toUpperCase();
-  const [selectedTab, setSelectedTab] = useState(emergencyKey === 'FIRE' ? 'fire' : 'hospital');
+  const [selectedTab, setSelectedTab] = useState(
+    emergencyKey === 'FIRE' ? 'fire' : emergencyKey === 'SECURITY' ? 'police' : 'hospital'
+  );
 
   useEffect(() => {
     if (isOpen) {
@@ -31,7 +33,7 @@ function NearbyServices({
 
   useEffect(() => {
     const key = (emergencyType || "").toString().toUpperCase();
-    setSelectedTab(key === "FIRE" ? "fire" : "hospital");
+    setSelectedTab(key === "FIRE" ? "fire" : key === "SECURITY" ? "police" : "hospital");
   }, [emergencyType, isOpen]);
 
   const loadNearbyServices = async () => {
@@ -51,8 +53,8 @@ function NearbyServices({
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div className="flex items-start gap-3 flex-1">
-          <div className={`p-2 rounded-lg ${isFireStation ? 'bg-orange-100' : 'bg-red-100'}`}>
-            <AlertCircle className={`w-5 h-5 ${isFireStation ? 'text-orange-600' : 'text-red-600'}`} />
+          <div className={`p-2 rounded-lg ${isFireStation ? 'bg-orange-100' : service.type === 'Police Station' ? 'bg-blue-100' : 'bg-red-100'}`}>
+            <AlertCircle className={`w-5 h-5 ${isFireStation ? 'text-orange-600' : service.type === 'Police Station' ? 'text-blue-600' : 'text-red-600'}`} />
           </div>
           <div>
             <h3 className="font-bold text-gray-900">{service.name}</h3>
@@ -179,6 +181,16 @@ function NearbyServices({
             >
               🏥 Hospitals ({services.hospitals.length})
             </button>
+            <button
+              onClick={() => setSelectedTab('police')}
+              className={`flex-1 py-3 font-semibold transition ${
+                selectedTab === 'police'
+                  ? 'text-blue-600 border-b-2 border-blue-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🚔 Police ({services.policeStations?.length || 0})
+            </button>
           </div>
 
           {/* Content */}
@@ -227,6 +239,27 @@ function NearbyServices({
                         <div className="text-center py-12 text-gray-500">
                           <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No hospitals found in the area</p>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+
+                  {/* Police Stations Tab */}
+                  {selectedTab === 'police' && (
+                    <motion.div
+                      key="police"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      {(services.policeStations?.length || 0) > 0 ? (
+                        services.policeStations.map(station => (
+                          <ServiceCard key={station.id} service={station} isFireStation={true} />
+                        ))
+                      ) : (
+                        <div className="text-center py-12 text-gray-500">
+                          <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                          <p>No police stations found in the area</p>
                         </div>
                       )}
                     </motion.div>

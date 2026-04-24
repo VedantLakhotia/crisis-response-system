@@ -8,7 +8,7 @@ import {
 import { 
   Flame, Activity, ShieldAlert, AlertTriangle, Clock, 
   CheckCircle, Navigation, LayoutDashboard, Settings, 
-  LogIn, LogOut, X, MapPin, Send, Phone, ShieldCheck 
+  LogIn, LogOut, X, MapPin, Send, Phone, ShieldCheck, MessageSquare, BookOpen
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
@@ -18,21 +18,35 @@ import NearbyServices from "./components/NearbyServices";
 import DepartmentView from "./components/DepartmentView";
 import GuestSafety from "./components/GuestSafety";
 import HotelAdmin from "./components/HotelAdmin";
+import CommunicationHub from "./components/CommunicationHub";
 import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
 
 // ==========================================
 // MAIN DASHBOARD COMPONENT
 // ==========================================
 function AppDashboard() {
-  const [user, setUser] = useState(null); // { id, role } | null
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem('crisisUser');
+      return stored ? JSON.parse(stored) : null;
+    } catch { return null; }
+  }); // { id, role } | null — persisted across refreshes
   const [alerts, setAlerts] = useState([]);
   const [staff, setStaff] = useState([]);
   const [showLogin, setShowLogin] = useState(false);
   const [pendingAlert, setPendingAlert] = useState(null); // { type } — waiting for location pin
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState(() => {
+    try { 
+      const s = localStorage.getItem('crisisSettings');
+      return s ? JSON.parse(s) : { audioAlerts: true, incidentThreshold: 5, autoDispatchMedical: true };
+    } catch { return { audioAlerts: true, incidentThreshold: 5, autoDispatchMedical: true }; }
+  });
   const [showNearbyServices, setShowNearbyServices] = useState(false);
   const [selectedAlertType, setSelectedAlertType] = useState("FIRE");
   const [nearbyCenter, setNearbyCenter] = useState({ lat: 22.7196, lng: 75.8577 });
   const [enquiries, setEnquiries] = useState([]);
+  const [activeTab, setActiveTab] = useState("dashboard");
 
   useEffect(() => {
     const q = query(collection(db, "alerts"), orderBy("time", "desc"));
@@ -85,6 +99,7 @@ function AppDashboard() {
 
   // Audio ping for PENDING_VERIFICATION
   useEffect(() => {
+    if (!settings.audioAlerts) return;
     if (user?.role?.toLowerCase() !== 'guest' && !user?.onDuty) return;
 
     const hasPending = alerts.some(a => a.status === "PENDING_VERIFICATION");
@@ -110,6 +125,7 @@ function AppDashboard() {
 
   // Siren for MEDICAL alerts
   useEffect(() => {
+    if (!settings.audioAlerts) return;
     if (user?.role?.toLowerCase() !== 'guest' && !user?.onDuty) return;
 
     const activeMedical = alerts.some(a => a.type === "MEDICAL" && a.status === "CONFIRMED");
@@ -189,7 +205,7 @@ function AppDashboard() {
       (user?.role?.toLowerCase() === "guest" ? "Guest" : reporterId) ||
       "Guest";
     
-    if (type === "MEDICAL" || user?.role?.toLowerCase() !== 'guest') {
+    if ((type === "MEDICAL" && settings.autoDispatchMedical !== false) || user?.role?.toLowerCase() !== 'guest') {
       finalStatus = "CONFIRMED";
     } else {
       // Threshold check
@@ -200,7 +216,8 @@ function AppDashboard() {
         where("status", "==", "PENDING_VERIFICATION")
       );
       const snapshot = await getDocs(q);
-      if (snapshot.docs.length >= 4) { // This is the 5th
+      const threshold = (settings.incidentThreshold || 5) - 1;
+      if (snapshot.docs.length >= threshold) { 
         finalStatus = "CONFIRMED";
         // Batch update old ones
         const batch = writeBatch(db);
@@ -263,29 +280,22 @@ function AppDashboard() {
         <div className="p-3 bg-red-500/20 rounded-2xl text-red-500 mb-6">
           <Navigation size={28} />
         </div>
-        <nav className="flex flex-col gap-8 text-slate-400">
-          <button aria-label="Go to Dashboard" title="Dashboard">
-            <LayoutDashboard className="text-red-500 cursor-pointer" />
+        <nav className="flex-1 w-full flex flex-col items-center gap-8 text-slate-400">
+          <button aria-label="Go to Dashboard" title="Dashboard" onClick={() => setActiveTab("dashboard")}>
+            <LayoutDashboard className={`cursor-pointer transition-colors ${activeTab === 'dashboard' ? 'text-red-500' : 'hover:text-white'}`} />
           </button>
-          <button aria-label="View Active Incidents" title="Active Incidents">
-            <Activity className="hover:text-white cursor-pointer transition-colors" />
+          <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
+            <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'hover:text-white'}`} />
           </button>
-          <button aria-label="Security Settings" title="Security Settings">
-            <ShieldAlert className="hover:text-white cursor-pointer transition-colors" />
+          <button aria-label="Emergency Protocols" title="Emergency Protocols" onClick={() => setActiveTab("protocols")}>
+            <BookOpen className={`cursor-pointer transition-colors ${activeTab === 'protocols' ? 'text-green-500' : 'hover:text-white'}`} />
           </button>
-          <button aria-label="Settings" title="Settings">
+          <button aria-label="Admin Portal" title="Admin Portal" onClick={() => window.location.href='/admin'}>
+            <ShieldCheck className="hover:text-indigo-400 cursor-pointer transition-colors" />
+          </button>
+          <button aria-label="Settings" title="Settings" onClick={() => setShowSettings(true)}>
             <Settings className="hover:text-white cursor-pointer transition-colors" />
           </button>
-          <div className="mt-auto mb-4 border-t border-white/5 pt-8">
-            <button 
-              onClick={() => window.location.href='/admin'} 
-              aria-label="Admin Portal" 
-              title="Admin Portal"
-              className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl hover:bg-indigo-500 hover:text-white transition-all shadow-lg shadow-indigo-500/20"
-            >
-              <ShieldCheck size={20} />
-            </button>
-          </div>
         </nav>
       </aside>
 
@@ -309,7 +319,7 @@ function AppDashboard() {
                   System Active
                 </div>
                 <button
-                  onClick={() => setUser(null)}
+                  onClick={() => { setUser(null); sessionStorage.removeItem('crisisUser'); }}
                   title="Logout"
                   aria-label="Logout"
                   className="p-2 glass rounded-lg text-slate-400 hover:text-red-400 transition-colors"
@@ -343,7 +353,11 @@ function AppDashboard() {
             {/* Panel */}
             <div className="fixed top-20 right-6 z-50" role="dialog" aria-modal="true" aria-label="Login panel">
               <LoginPanel
-                onLogin={(u) => { setUser(u); setShowLogin(false); }}
+                onLogin={(u) => {
+                  setUser(u);
+                  try { sessionStorage.setItem('crisisUser', JSON.stringify(u)); } catch { /* noop */ }
+                  setShowLogin(false);
+                }}
                 onClose={() => setShowLogin(false)}
               />
             </div>
@@ -356,6 +370,19 @@ function AppDashboard() {
             alertType={pendingAlert.type}
             onConfirm={(data) => confirmAlert({ type: pendingAlert.type, ...data })}
             onCancel={() => setPendingAlert(null)}
+          />
+        )}
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <SettingsModal 
+            currentSettings={settings}
+            onSave={(newSettings) => {
+              setSettings(newSettings);
+              localStorage.setItem('crisisSettings', JSON.stringify(newSettings));
+              setShowSettings(false);
+            }}
+            onClose={() => setShowSettings(false)}
           />
         )}
 
@@ -390,11 +417,148 @@ function AppDashboard() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-10 flex flex-col lg:flex-row gap-8">
-          {/* Controls & Feed */}
-          <div className="lg:w-1/3 flex flex-col gap-8">
-            <section className="glass rounded-3xl p-8 shadow-2xl">
-              <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+        <div className="flex-1 overflow-y-auto p-10 flex flex-col lg:flex-row lg:items-start gap-8">
+          {activeTab === 'comms' ? (
+            <div className="w-full max-w-4xl mx-auto h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
+              <CommunicationHub
+                hotelID={user?.hotelID || null}
+                staffList={staff}
+                senderName={user?.name || user?.id || "Command"}
+              />
+            </div>
+          ) : activeTab === 'protocols' ? (
+            <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 h-[calc(100vh-140px)] overflow-y-auto custom-scroll pr-4 pb-10">
+              <div className="glass rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-64 h-64 bg-green-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
+                <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">
+                  <BookOpen className="text-green-500" size={32} />
+                  Emergency Action Protocols
+                </h2>
+                <p className="text-slate-400 mb-8 max-w-2xl text-sm">
+                  Standard Operating Procedures for all personnel during active crisis scenarios. Follow these guidelines strictly unless directed otherwise by Command.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* FIRE */}
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-6 hover:bg-black/60 transition-colors">
+                    <h3 className="text-lg font-bold text-red-500 flex items-center gap-2 mb-4">
+                      <Flame size={20} /> FIRE EMERGENCY
+                    </h3>
+                    <ul className="space-y-3 text-sm text-slate-300">
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Activate nearest fire alarm immediately upon discovery.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Evacuate guests using stairs. Guide them to assembly points.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-red-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Close doors behind you to contain the spread of fire.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Use elevators under any circumstances.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Attempt to fight fires larger than a small trash can.</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* MEDICAL */}
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-6 hover:bg-black/60 transition-colors">
+                    <h3 className="text-lg font-bold text-blue-500 flex items-center gap-2 mb-4">
+                      <Activity size={20} /> MEDICAL EMERGENCY
+                    </h3>
+                    <ul className="space-y-3 text-sm text-slate-300">
+                      <li className="flex items-start gap-2">
+                        <span className="text-blue-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Dispatch medical personnel or call EMS immediately.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-blue-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Bring the AED and First Aid kit to the location.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-blue-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Clear the area of onlookers to give the patient space.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Move the person unless they are in immediate danger.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Administer medication unless trained to do so.</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* SECURITY */}
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-6 hover:bg-black/60 transition-colors">
+                    <h3 className="text-lg font-bold text-orange-500 flex items-center gap-2 mb-4">
+                      <ShieldAlert size={20} /> SECURITY THREAT
+                    </h3>
+                    <ul className="space-y-3 text-sm text-slate-300">
+                      <li className="flex items-start gap-2">
+                        <span className="text-orange-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Secure the perimeter and lock down affected zones.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-orange-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Direct guests to secure, windowless areas if active threat.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-orange-500 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Observe and report details (descriptions, locations) silently.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Engage or confront the threat directly.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Make sudden movements if confronted.</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* GENERAL NOTIFICATIONS */}
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-6 hover:bg-black/60 transition-colors">
+                    <h3 className="text-lg font-bold text-slate-300 flex items-center gap-2 mb-4">
+                      <AlertTriangle size={20} /> SYSTEM PROTOCOLS
+                    </h3>
+                    <ul className="space-y-3 text-sm text-slate-300">
+                      <li className="flex items-start gap-2">
+                        <span className="text-slate-200 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Acknowledge all alerts within 30 seconds of receipt.</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-slate-200 mt-1">✓</span> 
+                        <span><strong>DO:</strong> Update alert status via the dashboard as situation evolves.</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Ignore unverified guest reports (Thresholds will auto-confirm).</span>
+                      </li>
+                      <li className="flex items-start gap-2 text-slate-400">
+                        <span className="text-slate-500 mt-1">✗</span> 
+                        <span><strong>DO NOT:</strong> Close communication channels until the ALL CLEAR is given.</span>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Controls & Feed */}
+              <div className="lg:w-1/3 flex flex-col gap-8 lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto custom-scroll">
+                <section className="glass rounded-3xl p-8 shadow-2xl">
+                  <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
                 <Flame size={20} className="text-red-500" /> Panic Triggers
               </h2>
               <div className="grid grid-cols-2 gap-4 mb-4">
@@ -407,7 +571,7 @@ function AppDashboard() {
               {/* Emergency Services Quick Access */}
               <div className="mt-6 pt-6 border-t border-white/10">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Quick Access</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <button
                     onClick={() => openNearbyServices("FIRE")}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 transition text-xs font-semibold"
@@ -424,15 +588,23 @@ function AppDashboard() {
                     <span>🏥</span>
                     Hospitals
                   </button>
+                  <button
+                    onClick={() => openNearbyServices("SECURITY")}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition text-xs font-semibold"
+                    title="Find nearby police stations"
+                  >
+                    <span>🚔</span>
+                    Police
+                  </button>
                 </div>
               </div>
             </section>
 
-            <section className="flex-1 glass rounded-3xl p-8 overflow-hidden flex flex-col">
-              <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+            <section className="relative glass rounded-xl p-6 flex flex-col max-h-[calc(100vh-420px)] min-h-[250px]">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 shrink-0">
                 <Clock size={20} className="text-slate-400" /> Active Feed
               </h2>
-              <div className="flex-1 overflow-y-auto pr-2 custom-scroll flex flex-col gap-4">
+              <div className="flex-1 overflow-y-auto pr-1 hide-scrollbar flex flex-col gap-4">
                 {alerts.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 py-10 opacity-50">
                     <CheckCircle size={48} className="mb-4" />
@@ -455,13 +627,11 @@ function AppDashboard() {
                 )}
               </div>
             </section>
+
           </div>
           {/* Map Section */}
-          <div className="flex-1 flex flex-col gap-6">
-            <div className="flex-1 relative glass rounded-3xl overflow-hidden shadow-2xl p-2">
-              <div className="absolute top-6 left-6 z-10 px-4 py-2 bg-black/80 backdrop-blur-md border border-white/10 rounded-xl text-xs font-medium text-slate-300">
-                Live Deployment Map
-              </div>
+          <div className="flex-1 flex flex-col gap-6 lg:sticky lg:top-0 self-start">
+            <div className="relative rounded-3xl overflow-hidden shadow-2xl">
               <MapModule alerts={alerts} staff={staff} />
             </div>
             
@@ -472,6 +642,8 @@ function AppDashboard() {
               <StatsCard label="Avg Response" value="1.2m" color="text-green-500" />
             </div>
           </div>
+          </>
+          )}
         </div>
       </main>
     </div>
@@ -634,7 +806,7 @@ function LoginPanel({ onLogin, onClose }) {
     
     const typedId = id.trim();
 
-    if (role === 'staff' || role === 'admin') {
+    if (role === 'staff') {
       try {
         const staffRef = collection(db, "staff");
         const snapshot = await getDocs(staffRef);
@@ -701,8 +873,8 @@ function LoginPanel({ onLogin, onClose }) {
       </div>
 
       {/* Role tabs */}
-      <div className="mx-5 mb-4 grid grid-cols-3 gap-1 p-1 bg-white/5 rounded-xl border border-white/5">
-        {["staff", "admin", "guest"].map((r) => (
+      <div className="mx-5 mb-4 grid grid-cols-2 gap-1 p-1 bg-white/5 rounded-xl border border-white/5">
+        {["staff", "guest"].map((r) => (
           <button
             key={r}
             type="button"
@@ -713,7 +885,7 @@ function LoginPanel({ onLogin, onClose }) {
                 : "text-slate-500 hover:text-slate-300"
             }`}
           >
-            {r === "staff" ? "👤 Staff" : r === "admin" ? "🛡️ Admin" : "🛎️ Guest"}
+            {r === "staff" ? "👤 Staff" : "🛎️ Guest"}
           </button>
         ))}
       </div>
@@ -1087,6 +1259,99 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
                 Dispatch {alertType} Alert
               </>
             )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ currentSettings, onSave, onClose }) {
+  const [settings, setSettings] = useState(currentSettings);
+
+  const toggleSetting = (key) => {
+    setSettings(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const handleSave = () => {
+    onSave(settings);
+    toast.success("Settings saved successfully.");
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div 
+        className="w-full max-w-md bg-[#16161c] rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between bg-black/20">
+          <h2 className="text-lg font-bold text-white flex items-center gap-2">
+            <Settings size={20} className="text-slate-400" />
+            System Settings
+          </h2>
+          <button onClick={onClose} className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 flex flex-col gap-6">
+          {/* Audio Alerts */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-white">Audio Alerts</h3>
+              <p className="text-[11px] text-slate-400">Play sounds for incoming and critical incidents.</p>
+            </div>
+            <button 
+              onClick={() => toggleSetting('audioAlerts')}
+              className={`w-11 h-6 rounded-full transition-colors relative ${settings.audioAlerts ? 'bg-red-500' : 'bg-slate-600'}`}
+            >
+              <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${settings.audioAlerts ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+
+          {/* Incident Threshold */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <h3 className="text-sm font-bold text-white">Guest Report Threshold</h3>
+                <p className="text-[11px] text-slate-400">Number of guest reports before auto-confirming.</p>
+              </div>
+              <span className="text-lg font-bold text-red-500">{settings.incidentThreshold}</span>
+            </div>
+            <input 
+              type="range" 
+              min="1" 
+              max="10" 
+              value={settings.incidentThreshold || 5} 
+              onChange={e => setSettings(p => ({ ...p, incidentThreshold: parseInt(e.target.value) }))}
+              className="w-full accent-red-500"
+            />
+          </div>
+
+          {/* Auto Dispatch Medical */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-white">Auto-Confirm Medical</h3>
+              <p className="text-[11px] text-slate-400">Instantly confirm all guest medical reports.</p>
+            </div>
+            <button 
+              onClick={() => toggleSetting('autoDispatchMedical')}
+              className={`w-11 h-6 rounded-full transition-colors relative ${settings.autoDispatchMedical ? 'bg-red-500' : 'bg-slate-600'}`}
+            >
+              <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${settings.autoDispatchMedical ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+        </div>
+
+        <div className="px-6 py-4 bg-black/20 border-t border-white/10 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white transition-colors">
+            Cancel
+          </button>
+          <button 
+            onClick={handleSave}
+            className="px-6 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-red-900/30 transition-all btn-click-effect"
+          >
+            Save Settings
           </button>
         </div>
       </div>
