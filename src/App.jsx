@@ -270,6 +270,8 @@ function AppDashboard() {
     });
   };
 
+  const userRole = (user?.role || "").toString().toLowerCase();
+  const canAccessComms = userRole === "staff" || userRole === "admin";
 
   return (
     <div className="flex bg-[#0a0a0c] text-white min-h-[100dvh] font-sans relative pb-16 md:pb-0">
@@ -280,9 +282,11 @@ function AppDashboard() {
         <button aria-label="Go to Dashboard" title="Dashboard" onClick={() => setActiveTab("dashboard")}>
           <LayoutDashboard className={`cursor-pointer transition-colors ${activeTab === 'dashboard' ? 'text-red-500' : 'text-slate-400 hover:text-white'}`} size={24} />
         </button>
-        <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
-          <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'text-slate-400 hover:text-white'}`} size={24} />
-        </button>
+        {canAccessComms && (
+          <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
+            <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'text-slate-400 hover:text-white'}`} size={24} />
+          </button>
+        )}
         <button aria-label="Emergency Protocols" title="Emergency Protocols" onClick={() => setActiveTab("protocols")}>
           <BookOpen className={`cursor-pointer transition-colors ${activeTab === 'protocols' ? 'text-green-500' : 'text-slate-400 hover:text-white'}`} size={24} />
         </button>
@@ -303,9 +307,11 @@ function AppDashboard() {
           <button aria-label="Go to Dashboard" title="Dashboard" onClick={() => setActiveTab("dashboard")}>
             <LayoutDashboard className={`cursor-pointer transition-colors ${activeTab === 'dashboard' ? 'text-red-500' : 'hover:text-white'}`} />
           </button>
-          <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
-            <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'hover:text-white'}`} />
-          </button>
+          {canAccessComms && (
+            <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
+              <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'hover:text-white'}`} />
+            </button>
+          )}
           <button aria-label="Emergency Protocols" title="Emergency Protocols" onClick={() => setActiveTab("protocols")}>
             <BookOpen className={`cursor-pointer transition-colors ${activeTab === 'protocols' ? 'text-green-500' : 'hover:text-white'}`} />
           </button>
