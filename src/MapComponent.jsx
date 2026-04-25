@@ -1,9 +1,9 @@
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline } from 'react-leaflet';
+import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { renderToString } from 'react-dom/server';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useEffect, useRef } from 'react';
 import { db } from "./firebase";
 import { doc, updateDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { getAllServices } from './utils/nearbyServices.js';
@@ -249,9 +249,11 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
             const elapsedOnLoad = (Date.now() - startMs) / 1000;
             const remainingOnLoad = Math.max(0, totalDuration - elapsedOnLoad);
 
+            const routePath = coordinates.map(c => [c[1], c[0]]); // Leaflet uses [lat, lng]
+
             setDispatches(prev => ({
               ...prev,
-              [alert.id]: { ...(prev[alert.id] || {}), etaSec: remainingOnLoad, unitType }
+              [alert.id]: { ...(prev[alert.id] || {}), etaSec: remainingOnLoad, unitType, path: routePath }
             }));
 
             // SYNCHRONIZED UPDATE: Use elapsed time for both ETA and vehicle position
@@ -266,9 +268,11 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
               // Interpolate vehicle position smoothly along the actual physical distance of the route
               let currentPos = [targetPos.lat, targetPos.lng]; // fallback
               let currentAngle = 0;
+              let currentRemainingPath = [];
               
               if (progress >= 1 || totalDist === 0) {
                 currentPos = [targetPos.lat, targetPos.lng];
+                currentRemainingPath = [];
               } else {
                 const targetDist = progress * totalDist;
                 for (let i = 1; i < coordinates.length; i++) {
@@ -287,6 +291,8 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
                     if (dx !== 0 || dy !== 0) {
                       currentAngle = Math.atan2(-dy, dx) * (180 / Math.PI);
                     }
+                    
+                    currentRemainingPath = [currentPos, ...routePath.slice(i)];
                     break;
                   }
                 }
@@ -299,7 +305,7 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
                 }
                 return {
                   ...prev,
-                  [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos, angle: finalAngle }
+                  [alert.id]: { ...(prev[alert.id] || {}), etaSec: remaining, truckPos: currentPos, angle: finalAngle, path: currentRemainingPath }
                 };
               });
               
@@ -342,7 +348,7 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
   }, []);
 
   return (
-    <div className="relative h-[600px] w-full rounded-3xl overflow-hidden shadow-lg border border-white/10 bg-black z-0">
+    <div className="relative h-full min-h-[400px] sm:min-h-[500px] lg:h-[600px] w-full rounded-3xl overflow-hidden shadow-lg border border-white/10 bg-black z-0">
       <MapContainer 
         center={hotelCenter} 
         zoom={14} 
@@ -423,19 +429,32 @@ function MapComponent({ alerts = [], staff = [], showServices = true }) {
           )
         ))}
 
-        {/* 5. DISPATCH UNIT TRACKING */}
+        {/* 5. DISPATCH UNIT TRACKING & ROUTES */}
         {Object.entries(dispatches).map(([id, d]) => {
           let unitIconType = "VEHICLE_FIRE";
-          if (d.unitType === "MEDICAL") unitIconType = "VEHICLE_MEDICAL";
-          else if (d.unitType === "SECURITY") unitIconType = "VEHICLE_SECURITY";
+          let routeColor = "#ef4444";
+          
+          if (d.unitType === "MEDICAL") {
+            unitIconType = "VEHICLE_MEDICAL";
+            routeColor = "#3b82f6";
+          } else if (d.unitType === "SECURITY") {
+            unitIconType = "VEHICLE_SECURITY";
+            routeColor = "#f97316";
+          }
 
-          return d?.truckPos ? (
-            <Marker
-              key={id}
-              position={d.truckPos}
-              icon={getCustomIcon(unitIconType, false, d.angle || 0)}
-            />
-          ) : null
+          return (
+            <React.Fragment key={id}>
+              {d.path && d.path.length > 0 && (
+                <Polyline positions={d.path} color={routeColor} weight={5} opacity={0.6} dashArray="8, 8" />
+              )}
+              {d.truckPos && (
+                <Marker
+                  position={d.truckPos}
+                  icon={getCustomIcon(unitIconType, false, d.angle || 0)}
+                />
+              )}
+            </React.Fragment>
+          );
         })}
       </MapContainer>
 

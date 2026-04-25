@@ -272,8 +272,27 @@ function AppDashboard() {
 
 
   return (
-    <div className="flex bg-[#0a0a0c] text-white min-h-screen font-sans relative">
+    <div className="flex bg-[#0a0a0c] text-white min-h-[100dvh] font-sans relative pb-16 md:pb-0">
       <Toaster position="top-right" theme="dark" richColors />
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur-md border-t border-white/10 z-[100] flex justify-around items-center p-4 pb-safe">
+        <button aria-label="Go to Dashboard" title="Dashboard" onClick={() => setActiveTab("dashboard")}>
+          <LayoutDashboard className={`cursor-pointer transition-colors ${activeTab === 'dashboard' ? 'text-red-500' : 'text-slate-400 hover:text-white'}`} size={24} />
+        </button>
+        <button aria-label="Communication Hub" title="Communication Hub" onClick={() => setActiveTab("comms")}>
+          <MessageSquare className={`cursor-pointer transition-colors ${activeTab === 'comms' ? 'text-blue-500' : 'text-slate-400 hover:text-white'}`} size={24} />
+        </button>
+        <button aria-label="Emergency Protocols" title="Emergency Protocols" onClick={() => setActiveTab("protocols")}>
+          <BookOpen className={`cursor-pointer transition-colors ${activeTab === 'protocols' ? 'text-green-500' : 'text-slate-400 hover:text-white'}`} size={24} />
+        </button>
+        <button aria-label="Admin Portal" title="Admin Portal" onClick={() => window.location.href='/admin'}>
+          <ShieldCheck className="text-slate-400 hover:text-indigo-400 cursor-pointer transition-colors" size={24} />
+        </button>
+        <button aria-label="Settings" title="Settings" onClick={() => setShowSettings(true)}>
+          <Settings className="text-slate-400 hover:text-white cursor-pointer transition-colors" size={24} />
+        </button>
+      </nav>
       
       {/* Sidebar - Visual Only for now */}
       <aside className="w-20 border-r border-white/5 flex flex-col items-center py-10 gap-8 glass hidden md:flex">
@@ -302,21 +321,21 @@ function AppDashboard() {
 
       <main className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="px-10 py-6 border-b border-white/5 flex justify-between items-center bg-black/20 backdrop-blur-md">
+        <header className="px-4 md:px-10 py-4 md:py-6 border-b border-white/5 flex justify-between items-center bg-black/20 backdrop-blur-md shrink-0">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white m-0">Crisis Control <span className="text-red-500">Center</span></h1>
-            <p className="text-slate-400 text-sm">Real-time hospitality emergency response</p>
+            <h1 className="text-xl md:text-2xl font-bold tracking-tight text-white m-0">Crisis Control <span className="text-red-500">Center</span></h1>
+            <p className="text-slate-400 text-[10px] md:text-sm hidden sm:block">Real-time hospitality emergency response</p>
           </div>
-          <div className="flex gap-4 items-center">
+          <div className="flex gap-2 md:gap-4 items-center">
             {user ? (
               <>
-                <div className="px-4 py-2 glass rounded-lg text-sm flex items-center gap-2">
-                  <span className="text-slate-200 mr-2 border-r border-white/10 pr-2 font-semibold">
+                <div className="px-2 md:px-4 py-1.5 md:py-2 glass rounded-lg text-xs md:text-sm flex items-center gap-2 max-w-[150px] md:max-w-none">
+                  <span className="text-slate-200 mr-1 md:mr-2 border-r border-white/10 pr-1 md:pr-2 font-semibold truncate">
                     {user?.name || user?.id || user}
                   </span>
-                  {user?.role && <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-md font-bold" style={{ background: user.role === 'staff' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)', color: user.role === 'staff' ? '#f87171' : '#94a3b8' }}>{user.role}</span>}
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                  System Active
+                  {user?.role && <span className="text-[9px] md:text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded-md font-bold hidden sm:inline-block" style={{ background: user.role === 'staff' ? 'rgba(239,68,68,0.15)' : 'rgba(100,116,139,0.15)', color: user.role === 'staff' ? '#f87171' : '#94a3b8' }}>{user.role}</span>}
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0 hidden sm:block" />
+                  <span className="hidden sm:inline">System Active</span>
                 </div>
                 <button
                   onClick={() => { setUser(null); sessionStorage.removeItem('crisisUser'); }}
@@ -351,7 +370,7 @@ function AppDashboard() {
               aria-hidden="true"
             />
             {/* Panel */}
-            <div className="fixed top-20 right-6 z-50" role="dialog" aria-modal="true" aria-label="Login panel">
+            <div className="fixed top-20 right-4 sm:right-6 left-4 sm:left-auto z-50 flex justify-center sm:block" role="dialog" aria-modal="true" aria-label="Login panel">
               <LoginPanel
                 onLogin={(u) => {
                   setUser(u);
@@ -417,7 +436,7 @@ function AppDashboard() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto p-10 flex flex-col lg:flex-row lg:items-start gap-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-10 flex flex-col lg:flex-row lg:items-start gap-6 md:gap-8">
           {activeTab === 'comms' ? (
             <div className="w-full max-w-4xl mx-auto h-[calc(100vh-140px)] min-h-[600px] flex flex-col">
               <CommunicationHub
@@ -427,8 +446,8 @@ function AppDashboard() {
               />
             </div>
           ) : activeTab === 'protocols' ? (
-            <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 h-[calc(100vh-140px)] overflow-y-auto custom-scroll pr-4 pb-10">
-              <div className="glass rounded-3xl p-8 shadow-2xl relative overflow-hidden">
+            <div className="w-full max-w-5xl mx-auto flex flex-col gap-8 pb-10">
+              <div className="glass rounded-2xl md:rounded-3xl p-5 md:p-8 shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-green-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
                 <h2 className="text-3xl font-bold mb-2 flex items-center gap-3">
                   <BookOpen className="text-green-500" size={32} />
@@ -556,12 +575,12 @@ function AppDashboard() {
           ) : (
             <>
               {/* Controls & Feed */}
-              <div className="lg:w-1/3 flex flex-col gap-8 lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto custom-scroll">
-                <section className="glass rounded-3xl p-8 shadow-2xl">
-                  <h2 className="text-lg font-semibold mb-6 flex items-center gap-2">
+              <div className="w-full lg:w-1/3 flex flex-col gap-6 md:gap-8 lg:max-h-[calc(100vh-140px)] lg:overflow-y-auto custom-scroll">
+                <section className="glass rounded-3xl p-5 md:p-8 shadow-2xl">
+                  <h2 className="text-lg font-semibold mb-4 md:mb-6 flex items-center gap-2">
                 <Flame size={20} className="text-red-500" /> Panic Triggers
               </h2>
-              <div className="grid grid-cols-2 gap-4 mb-4">
+              <div className="grid grid-cols-2 gap-3 md:gap-4 mb-4">
                 <TriggerButton onClick={() => sendAlert("FIRE")} color="bg-red-500" icon={<Flame />} label="FIRE" />
                 <TriggerButton onClick={() => sendAlert("MEDICAL")} color="bg-blue-600" icon={<Activity />} label="MEDICAL" />
                 <TriggerButton onClick={() => sendAlert("SECURITY")} color="bg-orange-600" icon={<ShieldAlert />} label="SECURITY" />
@@ -571,10 +590,10 @@ function AppDashboard() {
               {/* Emergency Services Quick Access */}
               <div className="mt-6 pt-6 border-t border-white/10">
                 <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Quick Access</p>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <button
                     onClick={() => openNearbyServices("FIRE")}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 transition text-xs font-semibold"
+                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 hover:text-orange-300 transition text-xs font-semibold"
                     title="Find nearby fire stations"
                   >
                     <span>🚒</span>
@@ -582,7 +601,7 @@ function AppDashboard() {
                   </button>
                   <button
                     onClick={() => openNearbyServices("MEDICAL")}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-semibold"
+                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 transition text-xs font-semibold"
                     title="Find nearby hospitals"
                   >
                     <span>🏥</span>
@@ -590,7 +609,7 @@ function AppDashboard() {
                   </button>
                   <button
                     onClick={() => openNearbyServices("SECURITY")}
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition text-xs font-semibold"
+                    className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition text-xs font-semibold"
                     title="Find nearby police stations"
                   >
                     <span>🚔</span>
@@ -600,7 +619,7 @@ function AppDashboard() {
               </div>
             </section>
 
-            <section className="relative glass rounded-xl p-6 flex flex-col max-h-[calc(100vh-420px)] min-h-[250px]">
+            <section className="relative glass rounded-xl p-5 md:p-6 flex flex-col min-h-[250px] lg:max-h-[calc(100vh-420px)]">
               <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 shrink-0">
                 <Clock size={20} className="text-slate-400" /> Active Feed
               </h2>
@@ -630,13 +649,13 @@ function AppDashboard() {
 
           </div>
           {/* Map Section */}
-          <div className="flex-1 flex flex-col gap-6 lg:sticky lg:top-0 self-start">
-            <div className="relative rounded-3xl overflow-hidden shadow-2xl">
+          <div className="flex-1 w-full flex flex-col gap-6 lg:sticky lg:top-0 self-start min-h-[400px]">
+            <div className="relative rounded-3xl overflow-hidden shadow-2xl h-[400px] md:h-auto md:flex-1 w-full">
               <MapModule alerts={alerts} staff={staff} />
             </div>
             
             {/* Quick Stats */}
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
               <StatsCard label="Active Alerts" value={alerts.length} color="text-red-500" />
               <StatsCard label="Field Staff" value={staff.length} color="text-blue-500" />
               <StatsCard label="Avg Response" value="1.2m" color="text-green-500" />
@@ -659,7 +678,7 @@ function TriggerButton({ onClick, color, icon, label }) {
       onClick={onClick}
       aria-label={`Trigger ${label} alert`}
       title={`Trigger ${label} alert`}
-      className={`${color} btn-click-effect hover:brightness-110 p-6 rounded-2xl flex flex-col items-center justify-center gap-2 shadow-lg shadow-black/20 group translate-y-0 hover:-translate-y-1`}
+      className={`${color} btn-click-effect hover:brightness-110 p-4 md:p-6 rounded-2xl flex flex-col items-center justify-center gap-2 shadow-lg shadow-black/20 group translate-y-0 hover:-translate-y-1`}
     >
       <div className="p-2 bg-white/20 rounded-xl group-hover:scale-110 transition-transform">
         {icon}
@@ -843,7 +862,7 @@ function LoginPanel({ onLogin, onClose }) {
 
   return (
     <div
-      className="w-[340px] flex flex-col overflow-hidden rounded-2xl border border-white/10 shadow-2xl shadow-black/60"
+      className="w-full sm:w-[340px] max-w-[340px] flex flex-col overflow-hidden rounded-2xl border border-white/10 shadow-2xl shadow-black/60"
       style={{ background: "linear-gradient(160deg, #16161c 0%, #0e0e12 100%)", animation: "slideDown 0.2s ease" }}
     >
       {/* Header strip */}
@@ -999,6 +1018,11 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
   const pinCfg = PIN_CONFIG[alertType] || PIN_CONFIG.OTHER;
   const stationCfg = STATION_CONFIG[alertType] || STATION_CONFIG.OTHER;
 
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
   const reverseGeocode = async (lat, lng) => {
     setGeocoding(true);
     setLocationName("");
@@ -1086,9 +1110,9 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
   const AMENITY_EMOJI = { fire_station: '🚒', hospital: '🏥', clinic: '🏥', police: '👮' };
 
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col" style={{ background: "rgba(10,10,12,0.92)", backdropFilter: "blur(12px)" }}>
+    <div className="fixed inset-0 z-[200] flex flex-col h-[100dvh] w-screen overflow-hidden" style={{ background: "rgba(10,10,12,0.92)", backdropFilter: "blur(12px)" }}>
       {/* Top bar */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
+      <div className="flex items-center justify-between px-6 py-4 border-b border-white/8 shrink-0" style={{ background: "rgba(255,255,255,0.03)" }}>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: `${accentColor}22`, border: `1px solid ${accentColor}44` }}>
             {ALERT_EMOJIS[alertType]}
@@ -1104,10 +1128,10 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
       </div>
 
       {/* Body: map + stations side-by-side */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
 
         {/* Map */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-0">
           <APIProvider apiKey={API_KEY}>
             <Map
               defaultCenter={hotelCenter}
@@ -1171,7 +1195,7 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
 
         {/* Nearby stations sidebar */}
         {pinned && (
-          <div className="w-72 flex flex-col border-l border-white/8 overflow-y-auto" style={{ background: "rgba(255,255,255,0.02)" }}>
+          <div className="w-full md:w-72 h-1/3 md:h-full flex flex-col border-t md:border-t-0 md:border-l border-white/8 overflow-y-auto shrink-0" style={{ background: "rgba(255,255,255,0.02)" }}>
             <div className="px-4 py-3 border-b border-white/5">
               <p className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
                 <span>{stationCfg.emoji}</span> Nearest {stationCfg.label}
@@ -1219,27 +1243,27 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
       </div>
 
       {/* Bottom action bar */}
-      <div className="px-6 py-4 border-t border-white/8 flex items-center justify-between gap-4" style={{ background: "rgba(255,255,255,0.03)" }}>
-        <div className="text-sm">
+      <div className="px-4 md:px-6 py-4 border-t border-white/8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shrink-0" style={{ background: "rgba(255,255,255,0.03)" }}>
+        <div className="text-sm w-full sm:w-auto">
           {pinned ? (
-            <span className="text-slate-300 text-xs bg-white/5 px-3 py-1.5 rounded-lg border border-white/8 flex items-center gap-2 max-w-xs">
+            <span className="text-slate-300 text-xs bg-white/5 px-3 py-1.5 rounded-lg border border-white/8 flex items-center gap-2 w-full sm:max-w-xs">
               <MapPin size={12} className="shrink-0 text-red-400" />
               {geocoding
                 ? <span className="text-slate-500 italic">Fetching location…</span>
-                : <span className="truncate">{locationName || "Pinned Location"}</span>}
+                : <span className="truncate block">{locationName || "Pinned Location"}</span>}
             </span>
           ) : (
             <span className="text-slate-600 text-xs">No location selected yet</span>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/10 transition-colors">
+        <div className="flex items-center justify-between sm:justify-end gap-3 w-full sm:w-auto">
+          <button onClick={onCancel} className="px-4 py-2 rounded-xl text-sm text-slate-400 hover:text-white hover:bg-white/10 transition-colors w-full sm:w-auto">
             Cancel
           </button>
           <button
             onClick={handleConfirm}
             disabled={!pinned || geocoding}
-            className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold text-white transition-all btn-click-effect disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-2 px-5 py-2 rounded-xl text-sm font-bold text-white transition-all btn-click-effect disabled:opacity-40 disabled:cursor-not-allowed w-full sm:w-auto"
             style={{
               background: (pinned && !geocoding) ? `linear-gradient(135deg, ${accentColor}, ${accentColor}cc)` : "#333",
               boxShadow: (pinned && !geocoding) ? `0 4px 20px ${accentColor}44` : "none"
@@ -1269,6 +1293,11 @@ function LocationPickerModal({ alertType, onConfirm, onCancel }) {
 function SettingsModal({ currentSettings, onSave, onClose }) {
   const [settings, setSettings] = useState(currentSettings);
 
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
   const toggleSetting = (key) => {
     setSettings(prev => ({ ...prev, [key]: !prev[key] }));
   };
@@ -1279,7 +1308,7 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div 
         className="w-full max-w-md bg-[#16161c] rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}

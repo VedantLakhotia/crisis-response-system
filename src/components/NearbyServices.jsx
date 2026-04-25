@@ -143,7 +143,7 @@ function NearbyServices({
           initial={{ y: 100, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: 100, opacity: 0 }}
-          className="bg-white w-full md:w-2xl md:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto"
+          className="bg-white w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl shadow-2xl max-h-[90vh] overflow-y-auto"
         >
           {/* Header */}
           <div className="sticky top-0 bg-gradient-to-r from-orange-600 to-red-600 text-white p-6 flex items-center justify-between">
@@ -160,10 +160,10 @@ function NearbyServices({
           </div>
 
           {/* Tabs */}
-          <div className="flex border-b border-gray-200 sticky top-[72px] bg-white z-40">
+          <div className="flex border-b border-gray-200 sticky top-[72px] bg-white z-40 text-xs sm:text-sm">
             <button
               onClick={() => setSelectedTab('fire')}
-              className={`flex-1 py-3 font-semibold transition ${
+              className={`flex-1 py-3 px-1 font-semibold transition ${
                 selectedTab === 'fire'
                   ? 'text-orange-600 border-b-2 border-orange-600'
                   : 'text-gray-600 hover:text-gray-900'
