@@ -8,7 +8,8 @@ import {
 import { 
   Flame, Activity, ShieldAlert, AlertTriangle, Clock, 
   CheckCircle, Navigation, LayoutDashboard, Settings, 
-  LogIn, LogOut, X, MapPin, Send, Phone, ShieldCheck, MessageSquare, BookOpen
+  LogIn, LogOut, X, MapPin, Send, Phone, ShieldCheck, MessageSquare, BookOpen,
+  ArrowUpDown, Wind, ZapOff, Mountain
 } from "lucide-react";
 import { Toaster, toast } from "sonner";
 
@@ -20,11 +21,13 @@ import GuestSafety from "./components/GuestSafety";
 import HotelAdmin from "./components/HotelAdmin";
 import CommunicationHub from "./components/CommunicationHub";
 import { APIProvider, Map, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
+import { useHotel } from "./context/HotelContext";
 
 // ==========================================
 // MAIN DASHBOARD COMPONENT
 // ==========================================
 function AppDashboard() {
+  const { hotelName, hotelID } = useHotel();
   const [user, setUser] = useState(() => {
     try {
       const stored = sessionStorage.getItem('crisisUser');
@@ -47,6 +50,9 @@ function AppDashboard() {
   const [nearbyCenter, setNearbyCenter] = useState({ lat: 22.7196, lng: 75.8577 });
   const [enquiries, setEnquiries] = useState([]);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [showTriageView, setShowTriageView] = useState(false);
+  const [triageType, setTriageType] = useState(null);
+  const [triageDetails, setTriageDetails] = useState("");
 
   useEffect(() => {
     const q = query(collection(db, "alerts"), orderBy("time", "desc"));
@@ -175,14 +181,14 @@ function AppDashboard() {
     });
   };
 
-  // Step 1: open location picker
+  // Step 1: trigger alert immediately without location picker
   const sendAlert = (type) => {
     if (!user) {
       toast.error("You must be logged in to trigger an alert.", { description: "Please log in first." });
       setShowLogin(true);
       return;
     }
-    setPendingAlert({ type });
+    confirmAlert({ type, coords: null, locationLabel: hotelName });
   };
 
   // Open nearby services modal
@@ -228,15 +234,18 @@ function AppDashboard() {
       }
     }
 
+    const finalCoords = coords || { lat: 22.7196, lng: 75.8577 };
+
     const promise = addDoc(collection(db, "alerts"), {
       type,
       status: finalStatus,
       location: locationLabel,
-      coords,
+      coords: finalCoords,
       triggeredBy: reporterId || "Guest",
       triggeredByName: reporterName,
       triggeredById: reporterId || "Guest",
       time: serverTimestamp(),
+      hotelID: hotelID || "UNKNOWN",
     });
     toast.promise(promise, {
       loading: `Dispatching ${type} alert...`,
@@ -587,10 +596,74 @@ function AppDashboard() {
                 <Flame size={20} className="text-red-500" /> Panic Triggers
               </h2>
               <div className="grid grid-cols-2 gap-3 md:gap-4 mb-4">
-                <TriggerButton onClick={() => sendAlert("FIRE")} color="bg-red-500" icon={<Flame />} label="FIRE" />
-                <TriggerButton onClick={() => sendAlert("MEDICAL")} color="bg-blue-600" icon={<Activity />} label="MEDICAL" />
-                <TriggerButton onClick={() => sendAlert("SECURITY")} color="bg-orange-600" icon={<ShieldAlert />} label="SECURITY" />
-                <TriggerButton onClick={() => sendAlert("OTHER")} color="bg-slate-600" icon={<AlertTriangle />} label="OTHER" />
+              {showTriageView ? (
+                <div className="col-span-2 flex flex-col gap-4 bg-black/40 border border-yellow-500/30 p-5 rounded-2xl relative mb-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <h3 className="text-yellow-500 font-bold flex items-center gap-2 text-sm tracking-wider uppercase">
+                      <AlertTriangle size={16} /> Incident Triage
+                    </h3>
+                    <button onClick={() => setShowTriageView(false)} className="text-[10px] font-bold text-slate-400 hover:text-white transition-colors uppercase tracking-widest">BACK</button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <TriageSelectButton 
+                      selected={triageType === 'ELEVATOR TRAP'} 
+                      onClick={() => setTriageType('ELEVATOR TRAP')} 
+                      label="ELEVATOR TRAP" 
+                      icon={<ArrowUpDown size={20} />} 
+                    />
+                    <TriageSelectButton 
+                      selected={triageType === 'GAS/CHEMICAL LEAK'} 
+                      onClick={() => setTriageType('GAS/CHEMICAL LEAK')} 
+                      label="GAS/CHEMICAL LEAK" 
+                      icon={<Wind size={20} />} 
+                    />
+                    <TriageSelectButton 
+                      selected={triageType === 'POWER/UTILITY FAILURE'} 
+                      onClick={() => setTriageType('POWER/UTILITY FAILURE')} 
+                      label="POWER/UTILITY FAILURE" 
+                      icon={<ZapOff size={20} />} 
+                    />
+                    <TriageSelectButton 
+                      selected={triageType === 'NATURAL DISASTER'} 
+                      onClick={() => setTriageType('NATURAL DISASTER')} 
+                      label="NATURAL DISASTER" 
+                      icon={<Mountain size={20} />} 
+                    />
+                  </div>
+                  <input 
+                    type="text" 
+                    placeholder="Quick Details (e.g., 3 people stuck on 4th floor)"
+                    value={triageDetails}
+                    onChange={e => setTriageDetails(e.target.value)}
+                    className="bg-black/50 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-yellow-500/50 w-full"
+                  />
+                  <button 
+                    disabled={!triageType}
+                    onClick={() => {
+                      if (!user) {
+                        toast.error("You must be logged in to trigger an alert.", { description: "Please log in first." });
+                        setShowLogin(true);
+                        return;
+                      }
+                      const locationStr = `${triageType}${triageDetails ? ' - ' + triageDetails : ''}`;
+                      confirmAlert({ type: "OTHER", coords: null, locationLabel: locationStr });
+                      setShowTriageView(false);
+                      setTriageType(null);
+                      setTriageDetails("");
+                    }}
+                    className="w-full bg-yellow-500 hover:bg-yellow-400 text-black font-black tracking-widest text-xs py-3 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed transition-colors btn-click-effect shadow-lg shadow-yellow-500/20"
+                  >
+                    SEND EMERGENCY ALERT
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <TriggerButton onClick={() => sendAlert("FIRE")} color="bg-red-500" icon={<Flame />} label="FIRE" />
+                  <TriggerButton onClick={() => sendAlert("MEDICAL")} color="bg-blue-600" icon={<Activity />} label="MEDICAL" />
+                  <TriggerButton onClick={() => sendAlert("SECURITY")} color="bg-orange-600" icon={<ShieldAlert />} label="SECURITY" />
+                  <TriggerButton onClick={() => setShowTriageView(true)} color="bg-slate-600" icon={<AlertTriangle />} label="OTHER" />
+                </>
+              )}
               </div>
               
               {/* Emergency Services Quick Access */}
@@ -690,6 +763,22 @@ function TriggerButton({ onClick, color, icon, label }) {
         {icon}
       </div>
       <span className="text-xs font-bold tracking-widest">{label}</span>
+    </button>
+  );
+}
+
+function TriageSelectButton({ selected, onClick, label, icon }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center justify-center gap-2 p-3 rounded-xl border transition-all ${
+        selected
+          ? 'bg-yellow-500/20 border-yellow-500/50 text-yellow-500'
+          : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-white'
+      }`}
+    >
+      {icon}
+      <span className="text-[10px] font-bold text-center leading-tight tracking-wider">{label}</span>
     </button>
   );
 }
@@ -1348,8 +1437,8 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
           <div>
             <div className="flex items-center justify-between mb-2">
               <div>
-                <h3 className="text-sm font-bold text-white">Guest Report Threshold</h3>
-                <p className="text-[11px] text-slate-400">Number of guest reports before auto-confirming.</p>
+                <h3 className="text-sm font-bold text-white">Guest Auto-Confirm Threshold</h3>
+                <p className="text-[11px] text-slate-400">Guest reports (Fire/Security) needed to bypass staff verification.</p>
               </div>
               <span className="text-lg font-bold text-red-500">{settings.incidentThreshold}</span>
             </div>
@@ -1361,17 +1450,21 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
               onChange={e => setSettings(p => ({ ...p, incidentThreshold: parseInt(e.target.value) }))}
               className="w-full accent-red-500"
             />
+            <div className="flex justify-between text-[10px] text-slate-500 px-1 mt-1">
+              <span>1 (Instant)</span>
+              <span>10 (Strict)</span>
+            </div>
           </div>
 
           {/* Auto Dispatch Medical */}
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-bold text-white">Auto-Confirm Medical</h3>
-              <p className="text-[11px] text-slate-400">Instantly confirm all guest medical reports.</p>
+              <h3 className="text-sm font-bold text-white">Guest Medical Auto-Confirm</h3>
+              <p className="text-[11px] text-slate-400">Instantly confirm and dispatch medical reports from guests.</p>
             </div>
             <button 
               onClick={() => toggleSetting('autoDispatchMedical')}
-              className={`w-11 h-6 rounded-full transition-colors relative ${settings.autoDispatchMedical ? 'bg-red-500' : 'bg-slate-600'}`}
+              className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${settings.autoDispatchMedical ? 'bg-red-500' : 'bg-slate-600'}`}
             >
               <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${settings.autoDispatchMedical ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>

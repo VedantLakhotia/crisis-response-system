@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useEffect } from "react";
-import { Building2, ArrowRight } from "lucide-react";
+import { Building2, ArrowRight, ChevronDown } from "lucide-react";
+import { db } from "../firebase";
+import { collection, getDocs, query, orderBy } from "firebase/firestore";
 
 const HotelContext = createContext(null);
 
@@ -40,15 +42,44 @@ function saveHotel(hotel) {
 
 // ============ ONBOARDING SCREEN ============
 function HotelOnboarding({ onComplete }) {
-  const [name, setName] = useState("");
+  const [selectedHotelJSON, setSelectedHotelJSON] = useState("");
+  const [hotels, setHotels] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchHotels = async () => {
+      try {
+        const q = query(collection(db, "hotels"), orderBy("createdAt", "desc"));
+        const snapshot = await getDocs(q);
+        const fetchedHotels = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        setHotels(fetchedHotels);
+      } catch (err) {
+        console.error("Error fetching hotels:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchHotels();
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!selectedHotelJSON) return;
+    
+    let selectedHotel;
+    try {
+      selectedHotel = JSON.parse(selectedHotelJSON);
+    } catch (err) {
+      return;
+    }
+
     const hotel = {
-      hotelName: name.trim(),
-      hotelID: generateID(name),
-      orgID: generateOrgID(name),
+      hotelName: selectedHotel.name,
+      hotelID: selectedHotel.hotelID || generateID(selectedHotel.name),
+      orgID: selectedHotel.orgID || generateOrgID(selectedHotel.name),
     };
     saveHotel(hotel);
     onComplete(hotel);
@@ -70,37 +101,51 @@ function HotelOnboarding({ onComplete }) {
         <form onSubmit={handleSubmit} className="px-8 pb-8 flex flex-col gap-5">
           <div>
             <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Hotel / Property Name
+              Select Registered Hotel
             </label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder='e.g. "Radisson Blu Indore"'
-              autoFocus
-              required
-              className="w-full px-4 py-3.5 rounded-xl text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/60 transition-all"
-              style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
-            />
+            <div className="relative">
+              <select
+                value={selectedHotelJSON}
+                onChange={e => setSelectedHotelJSON(e.target.value)}
+                required
+                className="w-full px-4 py-3.5 rounded-xl text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60 transition-all appearance-none cursor-pointer"
+                style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                <option value="" disabled className="text-slate-500 bg-[#14161e]">
+                  {loading ? "Loading hotels..." : "-- Choose a hotel --"}
+                </option>
+                {hotels.map(h => (
+                  <option key={h.id} value={JSON.stringify(h)} className="text-white bg-[#14161e]">{h.name}</option>
+                ))}
+              </select>
+              <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
+                <ChevronDown size={16} className="text-slate-400" />
+              </div>
+            </div>
           </div>
 
-          {name.trim() && (
-            <div className="rounded-xl p-4 border border-white/5 animate-fadeIn" style={{ background: "rgba(255,255,255,0.02)" }}>
-              <p className="text-[10px] text-slate-600 font-semibold uppercase tracking-widest mb-2">Preview</p>
-              <p className="text-sm font-bold text-white">{name.trim()}</p>
-              <p className="text-[11px] text-slate-500 font-mono mt-1">
-                ID: {generateID(name)} · ORG: {generateOrgID(name)}
-              </p>
-            </div>
-          )}
+          {selectedHotelJSON && (() => {
+            try {
+              const h = JSON.parse(selectedHotelJSON);
+              return (
+                <div className="rounded-xl p-4 border border-white/5 animate-fadeIn" style={{ background: "rgba(255,255,255,0.02)" }}>
+                  <p className="text-[10px] text-slate-600 font-semibold uppercase tracking-widest mb-2">Selected Property</p>
+                  <p className="text-sm font-bold text-white">{h.name}</p>
+                  <p className="text-[11px] text-slate-500 font-mono mt-1">
+                    ID: {h.hotelID || generateID(h.name)}
+                  </p>
+                </div>
+              );
+            } catch (err) { return null; }
+          })()}
 
           <button
             type="submit"
-            disabled={!name.trim()}
+            disabled={!selectedHotelJSON}
             className="w-full py-3.5 rounded-xl text-white text-sm font-bold tracking-wide transition-all btn-click-effect disabled:opacity-40 disabled:cursor-not-allowed"
             style={{
-              background: name.trim() ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#1e1e2e",
-              boxShadow: name.trim() ? "0 4px 20px rgba(99,102,241,0.3)" : "none",
+              background: selectedHotelJSON ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "#1e1e2e",
+              boxShadow: selectedHotelJSON ? "0 4px 20px rgba(99,102,241,0.3)" : "none",
             }}
           >
             <span className="flex items-center justify-center gap-2">

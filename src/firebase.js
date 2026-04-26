@@ -5,7 +5,7 @@ import { getAuth } from "firebase/auth";
 
 // 2. This is the configuration from your photo (The Address)
 const firebaseConfig = {
-  apiKey: "AIzaSyDP2qv8g44-LMcAzTa0HmWJMxiBmQOCn10",
+  apiKey: "AIzaSyDP2qV8g44-LMcAzTa0HmWJMxiBmQOCn10",
   authDomain: "crisisresponse-3be4f.firebaseapp.com",
   projectId: "crisisresponse-3be4f",
   storageBucket: "crisisresponse-3be4f.appspot.com",
