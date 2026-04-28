@@ -31,6 +31,15 @@ function loadHotel() {
       };
     }
 
+    // Bypass onboarding if accessing admin console
+    if (window.location.pathname.startsWith('/admin')) {
+      return {
+        hotelName: "Admin Portal",
+        hotelID: "ADMIN",
+        orgID: "ADMIN"
+      };
+    }
+
     const saved = localStorage.getItem(STORAGE_KEY);
     return saved ? JSON.parse(saved) : null;
   } catch { return null; }
@@ -151,6 +160,14 @@ function HotelOnboarding({ onComplete }) {
             <span className="flex items-center justify-center gap-2">
               Launch Dashboard <ArrowRight size={16} />
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => window.location.href = "/admin"}
+            className="w-full py-3.5 rounded-xl text-slate-400 text-sm font-bold tracking-wide transition-all btn-click-effect hover:bg-white/5 border border-white/5"
+          >
+            Access Admin Console
           </button>
 
           <p className="text-center text-[10px] text-slate-700 mt-1">

@@ -1426,7 +1426,24 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
               <p className="text-[11px] text-slate-400">Play sounds for incoming and critical incidents.</p>
             </div>
             <button 
-              onClick={() => toggleSetting('audioAlerts')}
+              type="button"
+              onClick={() => {
+                toggleSetting('audioAlerts');
+                if (!settings.audioAlerts) {
+                  // Play a test beep when turning ON
+                  try {
+                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);
+                    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.start();
+                    osc.stop(ctx.currentTime + 0.1);
+                  } catch (err) { console.error(err); }
+                }
+              }}
               className={`w-11 h-6 rounded-full transition-colors relative ${settings.audioAlerts ? 'bg-red-500' : 'bg-slate-600'}`}
             >
               <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-transform ${settings.audioAlerts ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1463,6 +1480,7 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
               <p className="text-[11px] text-slate-400">Instantly confirm and dispatch medical reports from guests.</p>
             </div>
             <button 
+              type="button"
               onClick={() => toggleSetting('autoDispatchMedical')}
               className={`w-11 h-6 rounded-full transition-colors relative shrink-0 ${settings.autoDispatchMedical ? 'bg-red-500' : 'bg-slate-600'}`}
             >
@@ -1472,10 +1490,11 @@ function SettingsModal({ currentSettings, onSave, onClose }) {
         </div>
 
         <div className="px-6 py-4 bg-black/20 border-t border-white/10 flex justify-end gap-3">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white transition-colors">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-semibold text-slate-300 hover:text-white transition-colors">
             Cancel
           </button>
           <button 
+            type="button"
             onClick={handleSave}
             className="px-6 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-bold rounded-xl shadow-lg shadow-red-900/30 transition-all btn-click-effect"
           >
